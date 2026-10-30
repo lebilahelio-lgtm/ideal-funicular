@@ -114,3 +114,9 @@ Em **Equipa e permissões → Acesso**, o proprietário escolhe as áreas do ger
 | Enquadramento, taxas fiscais e transferência de propriedade | Apenas proprietário | Sempre bloqueado |
 
 Retirar a consulta de stock também retira a alteração direta. O ponto de venda continua a mostrar os produtos e quantidades disponíveis necessários para vender, sem custos de aquisição. As vendas baixam o stock automaticamente. Retirar o caixa impede vender; é necessário fechar um turno aberto antes de retirar esse acesso. Os vendedores veem apenas os seus próprios recibos e turnos. As restrições são verificadas no servidor, os dados administrativos não autorizados são omitidos da resposta e os menus acompanham as permissões. Alterações ficam na auditoria e terminam as sessões da pessoa afetada. As contas existentes conservam os acessos habituais até serem configuradas.
+
+### Histórico de vendas por caixa e pessoa
+
+O vendedor consulta exclusivamente vendas registadas por si nos seus próprios caixas, incluindo turnos anteriores. Não pode abrir recibos de outros vendedores nem escolher outra pessoa nos filtros. Gerente e proprietário, quando têm acesso ao histórico, podem escolher **Histórico geral**, **As minhas vendas** ou uma pessoa específica. A lista de pessoas inclui contas removidas com vendas históricas, sem expor contactos pessoais.
+
+Os filtros de pessoa, caixa, pesquisa, pagamento e datas (horário de Angola) são aplicados no servidor sobre todo o histórico, com 50 vendas por página. O resumo mostra a contagem e o total de todas as vendas filtradas; **Exportar página CSV** exporta apenas a página apresentada, incluindo o número do caixa. As permissões configuradas pelo proprietário continuam a aplicar-se.

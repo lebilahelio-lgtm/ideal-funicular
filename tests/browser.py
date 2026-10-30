@@ -174,6 +174,26 @@ try:
         page.get_by_role('heading',name='Visão geral',exact=True).wait_for()
         page.screenshot(path='/tmp/loja-ui-test/dashboard.png',full_page=True)
         assert page.locator('.metric-value').first.inner_text()
+        page.get_by_role('button',name='Histórico de vendas',exact=True).click()
+        page.locator('.history-summary').wait_for()
+        assert page.locator('#history-results tbody tr').count()==1
+        assert page.locator('#scope option[value="all"]').count()==1
+        with page.expect_response('**/api/sales/history'):
+            page.locator('#scope').select_option('mine')
+        page.locator('#history-results[aria-busy="false"]').wait_for()
+        assert page.locator('#history-results tbody tr').count()==1
+        page.locator('#q').fill('não existe')
+        page.get_by_text('Nenhuma venda corresponde aos filtros.',exact=True).wait_for()
+        assert page.get_by_role('button',name='Exportar página CSV',exact=True).is_disabled()
+        page.get_by_role('button',name='Limpar filtros',exact=True).click()
+        page.locator('#history-results tbody tr').wait_for()
+        assert page.locator('#scope').input_value()=='all'
+        assert 'Caixa #0001' in page.locator('#history-results').inner_text()
+        page.screenshot(path='/tmp/loja-ui-test/historico-filtros.png',full_page=True)
+        page.set_viewport_size({'width':390,'height':844})
+        assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+        page.set_viewport_size({'width':1440,'height':1050})
+
         page.get_by_role('button',name='Equipa e permissões',exact=True).click()
         page.get_by_role('button',name='Adicionar pessoa').click()
         assert_required_markers(page)
@@ -213,6 +233,12 @@ try:
             assert seller_page.get_by_role('button',name=label,exact=True).count()==0
         assert seller_page.locator('[data-stock],[data-product]').count()==0
         assert seller_page.locator('[data-add]').count()==2
+
+        seller_page.get_by_role('button',name='Histórico de vendas',exact=True).click()
+        seller_page.get_by_text('Nenhuma venda corresponde aos filtros.',exact=True).wait_for()
+        assert seller_page.locator('#scope').count()==0
+        assert seller_page.locator('[data-receipt]').count()==0
+        assert 'Acesso limitado às vendas dos seus caixas.' in seller_page.locator('#history-form').inner_text()
         seller_context.close()
 
         page.locator('#filter-users-0-q').fill('ninguém')
@@ -362,7 +388,7 @@ try:
         assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'mobile horizontal overflow'
         assert not errors, errors
         browser.close()
-        print('PASS: custom manager permissions, seller menus in separate session, seller/manager registration, unique leadership UI, incomplete-response handling, live validation, grouped numbers, password visibility/strength, filters, simulated recovery UI, real password reset, multi-product receipt, underpayment down to one cent, electronic excess, cash shortage, pending VAT, rule configuration, product classification, mixed VAT receipt, tax report, required markers and conditional requirements, centered blue registration/login and desktop/mobile layout; no JavaScript errors.')
+        print('PASS: own-cash seller history, leadership history filters and mobile layout, custom manager permissions, seller menus in separate session, seller/manager registration, unique leadership UI, incomplete-response handling, live validation, grouped numbers, password visibility/strength, filters, simulated recovery UI, real password reset, multi-product receipt, underpayment down to one cent, electronic excess, cash shortage, pending VAT, rule configuration, product classification, mixed VAT receipt, tax report, required markers and conditional requirements, centered blue registration/login and desktop/mobile layout; no JavaScript errors.')
 except Exception:
     try:
         print('Browser flow failed; no credentials logged.')

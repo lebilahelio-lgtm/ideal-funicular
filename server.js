@@ -152,6 +152,28 @@ async function api(req, res, path, body) {
    if(path==='/api/sales')allow('sales');
   }
   if(/^\/api\/sales\/\d+$/.test(path)&&!['sales','cash','history','dashboard'].some(key=>user.permissions[key]))fail('Sem acesso aos recibos.',403);
+  if(path==='/api/sales/history'&&req.method==='POST'){
+    allow('history');
+    const leader=user.role!=='vendedor',scope=body.scope??(leader?'all':'mine');
+    if(!leader&&scope!=='mine')fail('Só pode consultar as vendas dos seus próprios caixas.',403);
+    if(scope!=='all'&&scope!=='mine'&&(!/^\d+$/.test(String(scope))||!Number.isSafeInteger(Number(scope))||Number(scope)<1))fail('Filtro de vendedor inválido.');
+    const clauses=[],args=[];
+    if(scope!=='all'){const actor=scope==='mine'?user.id:Number(scope);clauses.push('s.user_id=? AND EXISTS (SELECT 1 FROM shifts sh WHERE sh.id=s.shift_id AND sh.user_id=?)');args.push(actor,actor);}
+    for(const [key,operator] of [['start','>='],['end','<=']])if(body[key]){
+      const day=String(body[key]);if(!/^\d{4}-\d{2}-\d{2}$/.test(day)||Number.isNaN(Date.parse(day))||new Date(day).toISOString().slice(0,10)!==day)fail('Data de filtro inválida.');
+      clauses.push(`date(s.created,'+1 hour')${operator}?`);args.push(day);
+    }
+    if(body.start&&body.end&&body.start>body.end)fail('A data inicial não pode ser posterior à data final.');
+    if(body.method){if(!['dinheiro','tpa','transferencia'].includes(body.method))fail('Pagamento inválido.');clauses.push('s.method=?');args.push(body.method);}
+    if(body.shift_id){const id=Number(body.shift_id);if(!Number.isSafeInteger(id)||id<1)fail('Caixa inválido.');clauses.push('s.shift_id=?');args.push(id);}
+    if(body.q){const q=String(body.q).trim();if(q.length>150)fail('Pesquisa demasiado longa.');clauses.push("instr(lower(printf('%05d',s.id)||' '||s.customer||' '||u.name),lower(?))>0");args.push(q);}
+    const page=Number(body.page??1),size=50;if(!Number.isSafeInteger(page)||page<1||page>1000000)fail('Página inválida.');
+    const from='FROM sales s JOIN users u ON u.id=s.user_id'+(clauses.length?' WHERE '+clauses.join(' AND '):'');
+    const summary=one('SELECT COUNT(*) AS count,COALESCE(SUM(s.total),0) AS total '+from,...args);
+    const pages=Math.max(1,Math.ceil(summary.count/size)),current=Math.min(page,pages);
+    return {sales:all('SELECT s.*,u.name AS seller '+from+' ORDER BY s.id DESC LIMIT ? OFFSET ?',...args,size,(current-1)*size),summary,page:current,pages,page_size:size,
+      sellers:leader?all("SELECT id,name,deleted_at FROM users WHERE id=? OR EXISTS (SELECT 1 FROM sales s WHERE s.user_id=users.id) ORDER BY name",user.id):[]};
+  }
   if (path === '/api/state' && req.method === 'GET') {
     const manager = user.role !== 'vendedor',p=user.permissions;
     const viewSales=p.history||p.dashboard;
@@ -161,7 +183,7 @@ async function api(req, res, path, body) {
     const currentShift=one("SELECT s.*,(SELECT COALESCE(SUM(total),0) FROM sales WHERE shift_id=s.id AND method='dinheiro') AS cash_sales FROM shifts s WHERE user_id=? AND closed IS NULL",user.id);
     const cashSummary=currentShift?one("SELECT COUNT(*) AS sales_count,COALESCE(SUM(total),0) AS total_sales,COALESCE(SUM(CASE WHEN method='dinheiro' THEN total ELSE 0 END),0) AS cash_total,COALESCE(SUM(CASE WHEN method='tpa' THEN total ELSE 0 END),0) AS tpa_total,COALESCE(SUM(CASE WHEN method='transferencia' THEN total ELSE 0 END),0) AS transfer_total,MAX(created) AS last_sale_at FROM sales WHERE shift_id=?",currentShift.id):null;
     const cashRecent=currentShift?all('SELECT s.*,u.name AS seller FROM sales s JOIN users u ON u.id=s.user_id WHERE shift_id=? ORDER BY s.id DESC LIMIT 5',currentShift.id):[];
-    return { user, products, fiscal:fiscalState(db), current_shift:p.cash?currentShift:null,cash_summary:p.cash?cashSummary:null,cash_recent:p.cash?cashRecent:[], sales: viewSales?all(`SELECT s.*,u.name AS seller FROM sales s JOIN users u ON u.id=s.user_id ${manager ? '' : 'WHERE s.user_id=?'} ORDER BY s.id DESC LIMIT ${p.history?100:5}`, ...(manager ? [] : [user.id])):[],
+    return { user, products, fiscal:fiscalState(db), current_shift:p.cash?currentShift:null,cash_summary:p.cash?cashSummary:null,cash_recent:p.cash?cashRecent:[], sales: viewSales?all(`SELECT s.*,u.name AS seller FROM sales s JOIN users u ON u.id=s.user_id ${manager ? '' : 'WHERE s.user_id=? AND EXISTS (SELECT 1 FROM shifts own WHERE own.id=s.shift_id AND own.user_id=s.user_id)'} ORDER BY s.id DESC LIMIT ${p.history?100:5}`, ...(manager ? [] : [user.id])):[],
       shifts: p.cash?all(`SELECT s.*,u.name AS seller,(SELECT COALESCE(SUM(total),0) FROM sales WHERE shift_id=s.id AND method='dinheiro') AS cash_sales FROM shifts s JOIN users u ON u.id=s.user_id ${manager ? '' : 'WHERE s.user_id=?'} ORDER BY s.id DESC LIMIT 50`,...(manager ? [] : [user.id])):[],
       users: p.users ? all('SELECT id,name,email,bi,birth_date,phone,role,active,permissions FROM users WHERE deleted_at IS NULL ORDER BY id').map(u=>({...u,permissions:permissions(u.role,JSON.parse(u.permissions||'{}'))})) : [],
       purchases: p.stock_edit ? all('SELECT m.*,p.name AS product,p.unit,u.name AS actor FROM movements m JOIN products p ON p.id=m.product_id JOIN users u ON u.id=m.user_id ORDER BY m.id DESC LIMIT 100') : [],
@@ -238,7 +260,7 @@ async function api(req, res, path, body) {
     for(const i of basket.lines){run('INSERT INTO items(sale_id,product_id,name,unit,quantity,price,total,discount_amount,tax_base,tax_amount,taxed_total,tax_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',id,i.id,i.name,i.unit,i.quantity,i.price,i.total,i.discount_amount,i.tax_base,i.tax_amount,i.taxed_total,i.tax_snapshot?JSON.stringify(i.tax_snapshot):null);run('UPDATE products SET stock=ROUND(stock-?,3) WHERE id=?',i.quantity,i.id);}
     audit(user,'Venda',`Recibo #${id}; total ${total/100} Kz`);return receipt(id);
   });
-  if (/^\/api\/sales\/\d+$/.test(path) && req.method==='GET') { const r=receipt(Number(path.split('/').pop())); if(!r.id) fail('Recibo inexistente.',404); if((user.role==='vendedor'||(!user.permissions.history&&!user.permissions.dashboard)) && r.user_id!==user.id) fail('Sem permissão.',403); return r; }
+  if (/^\/api\/sales\/\d+$/.test(path) && req.method==='GET') { const r=receipt(Number(path.split('/').pop())); if(!r.id) fail('Recibo inexistente.',404); if((user.role==='vendedor'||(!user.permissions.history&&!user.permissions.dashboard)) && (r.user_id!==user.id||!one('SELECT id FROM shifts WHERE id=? AND user_id=?',r.shift_id,user.id))) fail('Sem permissão.',403); return r; }
   if(path==='/api/users' && req.method==='POST') {
     manage(user); const role=text(body.role,'Perfil'); if(!['gerente','vendedor'].includes(role)) fail('Só pode cadastrar gerentes ou vendedores. Para mudar o proprietário, use a transferência de propriedade.');
     if(user.role==='gerente' && role!=='vendedor') fail('Apenas o proprietário pode gerir gerentes e proprietários.',403);
