@@ -1,5 +1,5 @@
 import {permissions,permissionLabels,sellerKeys} from './public/permissions.js';
-import {titleName,nameError,gmailValid} from './public/validation.js';
+import {titleName,descriptiveText,nameError,gmailValid} from './public/validation.js';
 import http from 'node:http';
 import {calculateTaxBasket} from './public/tax.js';
 import {migrateFiscal,fiscalState,saveFiscalSettings,saveTaxRule,taxReport} from './fiscal.js';
@@ -166,7 +166,9 @@ async function api(req, res, path, body) {
     if(body.start&&body.end&&body.start>body.end)fail('A data inicial não pode ser posterior à data final.');
     if(body.method){if(!['dinheiro','tpa','transferencia'].includes(body.method))fail('Pagamento inválido.');clauses.push('s.method=?');args.push(body.method);}
     if(body.shift_id){const id=Number(body.shift_id);if(!Number.isSafeInteger(id)||id<1)fail('Caixa inválido.');clauses.push('s.shift_id=?');args.push(id);}
-    if(body.q){const q=String(body.q).trim();if(q.length>150)fail('Pesquisa demasiado longa.');clauses.push("instr(lower(printf('%05d',s.id)||' '||s.customer||' '||u.name),lower(?))>0");args.push(q);}
+    const searchBy=body.search_by??'receipt',searchColumns={receipt:"printf('%05d',s.id)",customer:'s.customer',seller:'u.name'};
+    if(!Object.hasOwn(searchColumns,searchBy))fail('Filtro de pesquisa inválido.');
+    if(body.q){const q=String(body.q).trim();if(q.length>150)fail('Pesquisa demasiado longa.');clauses.push(`instr(lower(${searchColumns[searchBy]}),lower(?))>0`);args.push(q);}
     const page=Number(body.page??1),size=50;if(!Number.isSafeInteger(page)||page<1||page>1000000)fail('Página inválida.');
     const from='FROM sales s JOIN users u ON u.id=s.user_id'+(clauses.length?' WHERE '+clauses.join(' AND '):'');
     const summary=one('SELECT COUNT(*) AS count,COALESCE(SUM(s.total),0) AS total '+from,...args);
@@ -209,7 +211,7 @@ async function api(req, res, path, body) {
   if (path === '/api/products' && req.method === 'POST') {
     manage(user);
     if(nameError(body.name,true))fail(nameError(body.name,true));
-    const name=titleName(text(body.name,'Produto')), category=text(body.category,'Categoria'), unit=text(body.unit,'Unidade'), pack=text(body.pack_type,'Embalagem');
+    const name=titleName(text(body.name,'Produto')), category=descriptiveText(text(body.category,'Categoria')), unit=text(body.unit,'Unidade'), pack=descriptiveText(text(body.pack_type,'Embalagem'));
     if (!['un','kg','L','g','mL'].includes(unit)) fail('Unidade não suportada.');
     const size=number(body.pack_size,'Conteúdo da embalagem',0.001), cost=money(body.pack_cost,'Custo'), price=money(body.price,'Preço'), minimum=number(body.minimum,'Stock mínimo'), barcode=body.barcode ? text(body.barcode,'Código de barras',80) : null;
     return transaction(()=>{
@@ -231,7 +233,7 @@ async function api(req, res, path, body) {
   if (path === '/api/stock' && req.method === 'POST') {
     manage(user);
     const p=one('SELECT * FROM products WHERE id=?',body.product_id); if (!p) fail('Produto inexistente.',404);
-    const packs=number(body.packs,'Embalagens',0.001), quantity=Math.round(packs*p.pack_size*1000)/1000, reason=text(body.reason,'Motivo');
+    const packs=number(body.packs,'Embalagens',0.001), quantity=Math.round(packs*p.pack_size*1000)/1000, reason=descriptiveText(text(body.reason,'Motivo'));
     return transaction(()=>{ run('UPDATE products SET stock=ROUND(stock+?,3) WHERE id=?',quantity,p.id); run('INSERT INTO movements(product_id,user_id,quantity,cost,reason) VALUES(?,?,?,?,?)',p.id,user.id,quantity,Math.round(packs*p.pack_cost),reason); audit(user,'Entrada de stock',`${p.name}: +${quantity} ${p.unit} • ${reason}`); return {ok:true}; });
   }
   if (path === '/api/shifts/open' && req.method === 'POST') return transaction(()=>{
@@ -256,7 +258,7 @@ async function api(req, res, path, body) {
     const result=settlement(basket.total,0,paid,body.method);if(!result.ok)fail(result.error);
     const total=result.total,subtotal=basket.subtotal;
     const snapshot={company_name:'TT LEBILA',company_nif:fiscal.settings.company_nif,company_address:fiscal.settings.company_address,regime:fiscal.settings.regime,price_mode:fiscal.settings.price_mode,legal_basis:fiscal.settings.legal_basis,confirmed_by:fiscal.settings.confirmed_by,confirmed_at:fiscal.settings.confirmed_at,revision:fiscal.revision,groups:basket.groups};
-    const id=Number(run('INSERT INTO sales(user_id,shift_id,customer,subtotal,discount,total,paid,change_due,method,tax_base,tax_total,fiscal_state,fiscal_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',user.id,shift.id,String(body.customer || 'Consumidor final').slice(0,150),subtotal,discount,total,paid,paid-total,body.method,basket.tax_base,basket.tax_total,basket.fiscal_state,JSON.stringify(snapshot)).lastInsertRowid);
+    const id=Number(run('INSERT INTO sales(user_id,shift_id,customer,subtotal,discount,total,paid,change_due,method,tax_base,tax_total,fiscal_state,fiscal_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',user.id,shift.id,descriptiveText(body.customer || 'Consumidor final').slice(0,150),subtotal,discount,total,paid,paid-total,body.method,basket.tax_base,basket.tax_total,basket.fiscal_state,JSON.stringify(snapshot)).lastInsertRowid);
     for(const i of basket.lines){run('INSERT INTO items(sale_id,product_id,name,unit,quantity,price,total,discount_amount,tax_base,tax_amount,taxed_total,tax_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',id,i.id,i.name,i.unit,i.quantity,i.price,i.total,i.discount_amount,i.tax_base,i.tax_amount,i.taxed_total,i.tax_snapshot?JSON.stringify(i.tax_snapshot):null);run('UPDATE products SET stock=ROUND(stock-?,3) WHERE id=?',i.quantity,i.id);}
     audit(user,'Venda',`Recibo #${id}; total ${total/100} Kz`);return receipt(id);
   });

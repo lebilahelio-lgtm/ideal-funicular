@@ -64,6 +64,8 @@ try:
         assert_required_markers(page)
         assert not page.locator('#tax_rule_id').evaluate('(el)=>el.required')
         page.locator('#name').fill('Arroz Branco')
+        page.locator('#category').fill('alimentos__secos')
+        assert page.locator('#category').input_value()=='Alimentos-Secos'
         page.locator('#unit').select_option('kg')
         page.locator('#barcode').fill('12345')
         page.locator('#pack_type').fill('Saco')
@@ -111,7 +113,7 @@ try:
         page.get_by_role('button',name='Continuar a adicionar produtos').click()
         page.locator('[data-add]').filter(has=page.get_by_text('Sabonete',exact=True)).click()
         assert page.locator('.cart-item').count()==2
-        assert page.locator('#customer').input_value()=='Cliente multiproduto'
+        assert page.locator('#customer').input_value()=='Cliente Multiproduto'
         assert page.locator('#discount').input_value()=='100'
         page.locator('.cart-item',has=page.get_by_text('Sabonete',exact=True)).get_by_role('button',name='Remover Sabonete',exact=True).click()
         assert page.locator('.cart-item').count()==1
@@ -177,11 +179,20 @@ try:
         page.get_by_role('button',name='Histórico de vendas',exact=True).click()
         page.locator('.history-summary').wait_for()
         assert page.locator('#history-results tbody tr').count()==1
-        assert page.locator('#scope option[value="all"]').count()==1
+        assert page.locator('#scope option[value="all"]').inner_text()=='Histórico geral'
+        assert page.locator('label[for="q"]').inner_text()=='Pesquisa recibo'
+        assert page.locator('#search_by option').count()==3
         with page.expect_response('**/api/sales/history'):
             page.locator('#scope').select_option('mine')
         page.locator('#history-results[aria-busy="false"]').wait_for()
         assert page.locator('#history-results tbody tr').count()==1
+        page.locator('#search_by').select_option('customer')
+        page.locator('#q').fill('Cliente')
+        with page.expect_response('**/api/sales/history'):
+            page.locator('#history-form').get_by_role('button',name='Filtrar',exact=True).click()
+        page.locator('#history-results[aria-busy="false"]').wait_for()
+        assert page.locator('#history-results tbody tr').count()==1
+        page.locator('#search_by').select_option('receipt')
         page.locator('#q').fill('não existe')
         page.get_by_text('Nenhuma venda corresponde aos filtros.',exact=True).wait_for()
         assert page.get_by_role('button',name='Exportar página CSV',exact=True).is_disabled()
@@ -284,7 +295,7 @@ try:
         page.get_by_text('Palavra-passe alterada. Outras sessões foram terminadas.',exact=True).wait_for()
         page.get_by_role('button',name='Produtos e stock',exact=True).click()
         page.get_by_role('heading',name='Compras e entradas de stock').wait_for()
-        assert 'Compra inicial' in page.locator('body').inner_text()
+        assert 'Compra Inicial' in page.locator('body').inner_text()
         page.get_by_role('button',name='Terminar sessão',exact=True).click()
         page.locator('#identifier').fill('009763932CA042')
         page.locator('#password').fill('NovaSenhaTemporaria123!')

@@ -1,3 +1,4 @@
+import {descriptiveText} from './public/validation.js';
 import {createHash} from 'node:crypto';
 const error=(message,status=400)=>Object.assign(new Error(message),{status});
 function text(value,label,max=1000){if(typeof value!=='string'||!value.trim()||value.trim().length>max)throw error(`${label} inválido.`);return value.trim();}
@@ -16,7 +17,7 @@ export function saveFiscalSettings(db,body,user){
  if(user.role!=='proprietario')throw error('Apenas o proprietário pode definir o enquadramento fiscal.',403);
  if(typeof body.enabled!=='boolean'||!['pendente','geral','exclusao','simplificado'].includes(body.regime)||!['included','excluded'].includes(body.price_mode))throw error('Configuração fiscal inválida.');
  if(body.enabled&&!['geral','exclusao'].includes(body.regime))throw error('O enquadramento está pendente ou exige apuramento específico do regime simplificado. Confirme-o com o contabilista antes de ativar.');
- const nif=String(body.company_nif||'').trim().toUpperCase(),address=String(body.company_address||'').trim(),basis=String(body.legal_basis||'').trim();
+ const nif=String(body.company_nif||'').trim().toUpperCase(),address=descriptiveText(String(body.company_address||'').trim()),basis=String(body.legal_basis||'').trim();
  if(nif&&!/^[A-Z0-9]{9,14}$/.test(nif))throw error('Introduza o NIF registado da empresa (9 a 14 caracteres alfanuméricos).');
  if(address.length>500||basis.length>2000)throw error('A morada ou fundamento legal ultrapassa o limite permitido.');
  if(body.enabled&&(!nif||!address||!basis||body.confirmed!==true))throw error('Para ativar, preencha NIF, morada, fundamento legal e confirme a validação do enquadramento.');
@@ -25,7 +26,7 @@ export function saveFiscalSettings(db,body,user){
 }
 export function saveTaxRule(db,body,user){
  if(user.role!=='proprietario')throw error('Apenas o proprietário pode definir regras de IVA.',403);
- const name=text(body.name,'Nome da regra',150),basis=text(body.legal_basis,'Fundamento legal',2000),start=fiscalDate(body.start_date,'Data inicial'),end=body.end_date?fiscalDate(body.end_date,'Data final'):null;
+ const name=descriptiveText(text(body.name,'Nome da regra',150)),basis=text(body.legal_basis,'Fundamento legal',2000),start=fiscalDate(body.start_date,'Data inicial'),end=body.end_date?fiscalDate(body.end_date,'Data final'):null;
  if(end&&end<start)throw error('A data final não pode ser anterior à data inicial.');
  if(!['tributado','isento','nao_sujeito'].includes(body.kind)||typeof body.rate!=='number'||!Number.isFinite(body.rate)||body.rate<0||body.rate>100||Math.abs(body.rate*100-Math.round(body.rate*100))>1e-6)throw error('Indique uma taxa de 0 a 100%, com até duas casas decimais.');
  if((body.kind==='tributado'&&body.rate===0)||(body.kind!=='tributado'&&body.rate!==0))throw error('Uma operação tributada precisa de taxa superior a zero; isenção e não sujeição usam 0%.');

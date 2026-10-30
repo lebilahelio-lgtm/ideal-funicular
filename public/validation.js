@@ -1,5 +1,5 @@
 // Shared rules for new registrations and product changes; existing records stay intact.
-export const titleName=value=>String(value??'').normalize('NFC').replace(/(^|\s)(\p{L})/gu,(_,space,letter)=>space+letter.toLocaleUpperCase('pt-AO'));
+export const titleName=value=>String(value??'').normalize('NFC').replace(/(^|[\s-])(\p{L})/gu,(_,space,letter)=>space+letter.toLocaleUpperCase('pt-AO'));
 export function nameError(value,product=false){
  const name=String(value??'').normalize('NFC').trim();
  if(!name||name.length>150)return 'Introduza um nome com até 150 caracteres.';
@@ -10,3 +10,5 @@ export function nameError(value,product=false){
  return '';
 }
 export const gmailValid=value=>/^[a-z0-9_]+@gmail\.com$/.test(String(value??''));
+
+export const descriptiveText=value=>titleName(String(value??'').replace(/_{2,}/g,'-'));

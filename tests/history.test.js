@@ -48,6 +48,10 @@ test('history isolates seller cash registers and filters all leadership history 
  assert.equal((await request('sales/history',{scope:'mine'})).body.summary.count,1);
  assert.equal((await request('sales/history',{method:'tpa'})).body.summary.count,1);
  assert.equal((await request('sales/history',{q:'00001'})).body.sales[0].id,receipts[0].id);
+ assert.equal((await request('sales/history',{q:'Maria',search_by:'seller'})).body.summary.count,1);
+ assert.equal((await request('sales/history',{q:'Maria',search_by:'customer'})).body.summary.count,0);
+ assert.equal((await request('sales/history',{q:'Consumidor',search_by:'customer'})).body.summary.count,5);
+ assert.equal((await request('sales/history',{search_by:'invalid'})).status,400);
  assert.equal((await request('sales/history',{start:'2000-01-02',end:'2000-01-01'})).status,400);
  assert.equal((await request('sales/history',{start:'2000-02-30'})).status,400);
  assert.equal((await request('sales/history',{scope:'bad'})).status,400);
