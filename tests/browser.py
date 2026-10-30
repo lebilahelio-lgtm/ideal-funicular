@@ -193,6 +193,28 @@ try:
         assert seller_password != initial_password
         page.get_by_role('button',name='Já guardei a palavra-passe').click()
         page.get_by_role('cell',name='João Silva 009763933CA042').wait_for()
+        seller_row=page.get_by_role('row').filter(has=page.get_by_role('cell',name='João Silva 009763933CA042'))
+        seller_row.get_by_role('button',name='Acesso',exact=True).click()
+        assert page.locator('[data-permission]').count()==5
+        assert page.locator('[data-permission="stock_edit"]').count()==0
+        page.locator('[data-permission="products"]').uncheck()
+        page.locator('[data-permission="dashboard"]').uncheck()
+        page.get_by_role('button',name='Guardar permissões',exact=True).click()
+        page.locator('#modal').wait_for(state='hidden')
+        # Separate session: seller sees POS availability, no stock page or internal controls.
+        seller_context=browser.new_context(viewport={'width':1440,'height':1050})
+        seller_page=seller_context.new_page()
+        seller_page.goto('http://127.0.0.1:3001')
+        seller_page.locator('#identifier').fill('joao@gmail.com')
+        seller_page.locator('#password').fill(seller_password)
+        seller_page.get_by_role('button',name='Iniciar sessão',exact=True).click()
+        seller_page.get_by_role('heading',name='Ponto de venda',exact=True).wait_for()
+        for label in ['Produtos e stock','Equipa e permissões','Atividades','Visão geral']:
+            assert seller_page.get_by_role('button',name=label,exact=True).count()==0
+        assert seller_page.locator('[data-stock],[data-product]').count()==0
+        assert seller_page.locator('[data-add]').count()==2
+        seller_context.close()
+
         page.locator('#filter-users-0-q').fill('ninguém')
         page.get_by_text('Nenhum registo corresponde aos filtros.',exact=True).wait_for()
         page.locator('#filter-users-0-q').fill('João Silva')
@@ -211,6 +233,13 @@ try:
         page.get_by_role('button',name='Criar utilizador').click()
         page.locator('.credential code').wait_for()
         page.get_by_role('button',name='Já guardei a palavra-passe').click()
+        manager_row=page.get_by_role('row').filter(has=page.get_by_role('cell',name='Maria Silva 009763934CA042'))
+        manager_row.get_by_role('button',name='Acesso',exact=True).click()
+        assert page.locator('[data-permission]').count()==9
+        page.locator('[data-permission="stock_edit"]').uncheck()
+        page.locator('[data-permission="activity"]').uncheck()
+        page.get_by_role('button',name='Guardar permissões',exact=True).click()
+        page.locator('#modal').wait_for(state='hidden')
         page.get_by_role('button',name='Adicionar pessoa').click()
         assert page.locator('#role option').count()==1
         page.locator('#modal [data-action="close"]').last.click()
@@ -333,7 +362,7 @@ try:
         assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'mobile horizontal overflow'
         assert not errors, errors
         browser.close()
-        print('PASS: seller/manager registration, unique leadership UI, incomplete-response handling, live validation, grouped numbers, password visibility/strength, filters, simulated recovery UI, real password reset, multi-product receipt, underpayment down to one cent, electronic excess, cash shortage, pending VAT, rule configuration, product classification, mixed VAT receipt, tax report, required markers and conditional requirements, centered blue registration/login and desktop/mobile layout; no JavaScript errors.')
+        print('PASS: custom manager permissions, seller menus in separate session, seller/manager registration, unique leadership UI, incomplete-response handling, live validation, grouped numbers, password visibility/strength, filters, simulated recovery UI, real password reset, multi-product receipt, underpayment down to one cent, electronic excess, cash shortage, pending VAT, rule configuration, product classification, mixed VAT receipt, tax report, required markers and conditional requirements, centered blue registration/login and desktop/mobile layout; no JavaScript errors.')
 except Exception:
     try:
         print('Browser flow failed; no credentials logged.')

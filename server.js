@@ -1,3 +1,4 @@
+import {permissions,permissionLabels,sellerKeys} from './public/permissions.js';
 import {titleName,nameError,gmailValid} from './public/validation.js';
 import http from 'node:http';
 import {calculateTaxBasket} from './public/tax.js';
@@ -36,6 +37,7 @@ WHEN NEW.name IS NOT OLD.name OR (OLD.bi IS NOT NULL AND NEW.bi IS NOT OLD.bi) O
 BEGIN SELECT RAISE(ABORT,'Identidade imutável'); END;`);
 const extraColumns=new Set(all('PRAGMA table_info(users)').map(c=>c.name));
 if(!extraColumns.has('deleted_at')) db.exec('ALTER TABLE users ADD COLUMN deleted_at TEXT');
+if(!extraColumns.has('permissions')) db.exec("ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '{}'");
 const sessionColumns=new Set(all('PRAGMA table_info(sessions)').map(c=>c.name));
 if(!sessionColumns.has('recovery')) db.exec('ALTER TABLE sessions ADD COLUMN recovery INTEGER NOT NULL DEFAULT 0');
 // Preserve historical accounts while normalising legacy duplicate leadership roles.
@@ -134,25 +136,38 @@ async function api(req, res, path, body) {
     return { ok: true };
   }
   const token = /(?:^|;\s*)session=([a-f0-9]+)/.exec(req.headers.cookie || '')?.[1];
-  const user = one('SELECT u.id,u.name,u.email,u.bi,u.birth_date,u.phone,u.role,s.recovery FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires>? AND u.active=1 AND u.deleted_at IS NULL',token || '',Date.now());
+  const user = one('SELECT u.id,u.name,u.email,u.bi,u.birth_date,u.phone,u.role,u.permissions,s.recovery FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires>? AND u.active=1 AND u.deleted_at IS NULL',token || '',Date.now());
   if (!user) fail('Inicie sessão para continuar.',401);
+  user.permissions=permissions(user.role,JSON.parse(user.permissions||'{}'));
+  const allow=key=>{if(!user.permissions[key])fail('Sem permissão para esta área ou operação.',403);};
   if (path === '/api/logout' && req.method === 'POST') { run('DELETE FROM sessions WHERE token=?',token); res.setHeader('Set-Cookie','session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'); return { ok:true }; }
   if(user.recovery && !['/api/state','/api/password','/api/logout'].includes(path)) fail('Defina uma nova palavra-passe para aceder à loja.',403);
   if(user.recovery && path==='/api/state' && req.method==='GET') return {user,recovery_required:true};
+  if(req.method==='POST'){
+   if(path.startsWith('/api/users')&&path!=='/api/users/transfer-owner')allow('users');
+   if(['/api/products','/api/stock'].includes(path))allow('stock_edit');
+   if(path==='/api/products/tax'){allow('stock_edit');allow('fiscal');}
+   if(path.startsWith('/api/fiscal/'))allow('fiscal');
+   if(path.startsWith('/api/shifts/'))allow('cash');
+   if(path==='/api/sales')allow('sales');
+  }
+  if(/^\/api\/sales\/\d+$/.test(path)&&!['sales','cash','history','dashboard'].some(key=>user.permissions[key]))fail('Sem acesso aos recibos.',403);
   if (path === '/api/state' && req.method === 'GET') {
-    const manager = user.role !== 'vendedor';
+    const manager = user.role !== 'vendedor',p=user.permissions;
+    const viewSales=p.history||p.dashboard;
     const products = all('SELECT * FROM products WHERE active=1 ORDER BY name');
-    if (!manager) for (const p of products) delete p.pack_cost;
+    if(!p.products&&!p.sales&&!p.dashboard)products.length=0;
+    if (!p.stock_edit) for (const product of products) delete product.pack_cost;
     const currentShift=one("SELECT s.*,(SELECT COALESCE(SUM(total),0) FROM sales WHERE shift_id=s.id AND method='dinheiro') AS cash_sales FROM shifts s WHERE user_id=? AND closed IS NULL",user.id);
     const cashSummary=currentShift?one("SELECT COUNT(*) AS sales_count,COALESCE(SUM(total),0) AS total_sales,COALESCE(SUM(CASE WHEN method='dinheiro' THEN total ELSE 0 END),0) AS cash_total,COALESCE(SUM(CASE WHEN method='tpa' THEN total ELSE 0 END),0) AS tpa_total,COALESCE(SUM(CASE WHEN method='transferencia' THEN total ELSE 0 END),0) AS transfer_total,MAX(created) AS last_sale_at FROM sales WHERE shift_id=?",currentShift.id):null;
     const cashRecent=currentShift?all('SELECT s.*,u.name AS seller FROM sales s JOIN users u ON u.id=s.user_id WHERE shift_id=? ORDER BY s.id DESC LIMIT 5',currentShift.id):[];
-    return { user, products, fiscal:fiscalState(db), current_shift:currentShift,cash_summary:cashSummary,cash_recent:cashRecent, sales: all(`SELECT s.*,u.name AS seller FROM sales s JOIN users u ON u.id=s.user_id ${manager ? '' : 'WHERE s.user_id=?'} ORDER BY s.id DESC LIMIT 100`, ...(manager ? [] : [user.id])),
-      shifts: all(`SELECT s.*,u.name AS seller,(SELECT COALESCE(SUM(total),0) FROM sales WHERE shift_id=s.id AND method='dinheiro') AS cash_sales FROM shifts s JOIN users u ON u.id=s.user_id ${manager ? '' : 'WHERE s.user_id=?'} ORDER BY s.id DESC LIMIT 50`,...(manager ? [] : [user.id])),
-      users: manager ? all('SELECT id,name,email,bi,birth_date,phone,role,active FROM users WHERE deleted_at IS NULL ORDER BY id') : [],
-      purchases: manager ? all('SELECT m.*,p.name AS product,p.unit,u.name AS actor FROM movements m JOIN products p ON p.id=m.product_id JOIN users u ON u.id=m.user_id ORDER BY m.id DESC LIMIT 100') : [],
-      audit: manager ? all('SELECT a.*,u.name AS actor FROM audit a JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 100') : [],
-      chart: all(`SELECT date(created,'+1 hour') AS day, SUM(total) AS total,COUNT(*) AS count FROM sales WHERE datetime(created,'+1 hour')>=date('now','+1 hour','-13 days') ${manager ? '' : 'AND user_id=?'} GROUP BY date(created,'+1 hour') ORDER BY day`,...(manager ? [] : [user.id])),
-      metrics: one(`SELECT COALESCE(SUM(CASE WHEN date(created,'+1 hour')=date('now','+1 hour') THEN total ELSE 0 END),0) AS today,COUNT(CASE WHEN date(created,'+1 hour')=date('now','+1 hour') THEN 1 END) AS count,COALESCE(SUM(CASE WHEN datetime(created,'+1 hour')>=date('now','+1 hour','-6 days') THEN total ELSE 0 END),0) AS current_week,COALESCE(SUM(CASE WHEN datetime(created,'+1 hour')>=date('now','+1 hour','-13 days') AND datetime(created,'+1 hour')<date('now','+1 hour','-6 days') THEN total ELSE 0 END),0) AS previous_week FROM sales ${manager ? '' : 'WHERE user_id=?'}`,...(manager ? [] : [user.id])) };
+    return { user, products, fiscal:fiscalState(db), current_shift:p.cash?currentShift:null,cash_summary:p.cash?cashSummary:null,cash_recent:p.cash?cashRecent:[], sales: viewSales?all(`SELECT s.*,u.name AS seller FROM sales s JOIN users u ON u.id=s.user_id ${manager ? '' : 'WHERE s.user_id=?'} ORDER BY s.id DESC LIMIT ${p.history?100:5}`, ...(manager ? [] : [user.id])):[],
+      shifts: p.cash?all(`SELECT s.*,u.name AS seller,(SELECT COALESCE(SUM(total),0) FROM sales WHERE shift_id=s.id AND method='dinheiro') AS cash_sales FROM shifts s JOIN users u ON u.id=s.user_id ${manager ? '' : 'WHERE s.user_id=?'} ORDER BY s.id DESC LIMIT 50`,...(manager ? [] : [user.id])):[],
+      users: p.users ? all('SELECT id,name,email,bi,birth_date,phone,role,active,permissions FROM users WHERE deleted_at IS NULL ORDER BY id').map(u=>({...u,permissions:permissions(u.role,JSON.parse(u.permissions||'{}'))})) : [],
+      purchases: p.stock_edit ? all('SELECT m.*,p.name AS product,p.unit,u.name AS actor FROM movements m JOIN products p ON p.id=m.product_id JOIN users u ON u.id=m.user_id ORDER BY m.id DESC LIMIT 100') : [],
+      audit: p.activity ? all('SELECT a.*,u.name AS actor FROM audit a JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 100') : [],
+      chart: p.dashboard?all(`SELECT date(created,'+1 hour') AS day, SUM(total) AS total,COUNT(*) AS count FROM sales WHERE datetime(created,'+1 hour')>=date('now','+1 hour','-13 days') ${manager ? '' : 'AND user_id=?'} GROUP BY date(created,'+1 hour') ORDER BY day`,...(manager ? [] : [user.id])):[],
+      metrics: p.dashboard?one(`SELECT COALESCE(SUM(CASE WHEN date(created,'+1 hour')=date('now','+1 hour') THEN total ELSE 0 END),0) AS today,COUNT(CASE WHEN date(created,'+1 hour')=date('now','+1 hour') THEN 1 END) AS count,COALESCE(SUM(CASE WHEN datetime(created,'+1 hour')>=date('now','+1 hour','-6 days') THEN total ELSE 0 END),0) AS current_week,COALESCE(SUM(CASE WHEN datetime(created,'+1 hour')>=date('now','+1 hour','-13 days') AND datetime(created,'+1 hour')<date('now','+1 hour','-6 days') THEN total ELSE 0 END),0) AS previous_week FROM sales ${manager ? '' : 'WHERE user_id=?'}`,...(manager ? [] : [user.id])):{today:0,count:0,current_week:0,previous_week:0} };
   }
   if(path==='/api/fiscal/settings' && req.method==='POST') return transaction(()=>{
     const result=saveFiscalSettings(db,body,user);audit(user,'Configuração fiscal',`Regime ${body.regime}; cálculo de IVA ${body.enabled?'ativo':'pendente'}; preços ${body.price_mode==='included'?'com IVA incluído':'sem IVA'}.`);return result;
@@ -178,6 +193,8 @@ async function api(req, res, path, body) {
     return transaction(()=>{
       let taxRule=body.tax_rule_id===undefined?(body.id?one('SELECT tax_rule_id FROM products WHERE id=?',body.id)?.tax_rule_id:null):body.tax_rule_id;
       if(taxRule!==null&&taxRule!==''&&taxRule!==undefined){taxRule=Number(taxRule);if(!Number.isSafeInteger(taxRule)||!one('SELECT id FROM tax_rules WHERE id=? AND active=1',taxRule))fail('Regra fiscal inválida ou inativa.');}else taxRule=null;
+      const oldRule=body.id?one('SELECT tax_rule_id FROM products WHERE id=?',body.id)?.tax_rule_id:null;
+      if(taxRule!==(oldRule??null))allow('fiscal');
       let id;
       if (body.id) {
         const existing=one('SELECT * FROM products WHERE id=?',body.id);
@@ -221,11 +238,11 @@ async function api(req, res, path, body) {
     for(const i of basket.lines){run('INSERT INTO items(sale_id,product_id,name,unit,quantity,price,total,discount_amount,tax_base,tax_amount,taxed_total,tax_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',id,i.id,i.name,i.unit,i.quantity,i.price,i.total,i.discount_amount,i.tax_base,i.tax_amount,i.taxed_total,i.tax_snapshot?JSON.stringify(i.tax_snapshot):null);run('UPDATE products SET stock=ROUND(stock-?,3) WHERE id=?',i.quantity,i.id);}
     audit(user,'Venda',`Recibo #${id}; total ${total/100} Kz`);return receipt(id);
   });
-  if (/^\/api\/sales\/\d+$/.test(path) && req.method==='GET') { const r=receipt(Number(path.split('/').pop())); if(!r.id) fail('Recibo inexistente.',404); if(user.role==='vendedor' && r.user_id!==user.id) fail('Sem permissão.',403); return r; }
+  if (/^\/api\/sales\/\d+$/.test(path) && req.method==='GET') { const r=receipt(Number(path.split('/').pop())); if(!r.id) fail('Recibo inexistente.',404); if((user.role==='vendedor'||(!user.permissions.history&&!user.permissions.dashboard)) && r.user_id!==user.id) fail('Sem permissão.',403); return r; }
   if(path==='/api/users' && req.method==='POST') {
     manage(user); const role=text(body.role,'Perfil'); if(!['gerente','vendedor'].includes(role)) fail('Só pode cadastrar gerentes ou vendedores. Para mudar o proprietário, use a transferência de propriedade.');
     if(user.role==='gerente' && role!=='vendedor') fail('Apenas o proprietário pode gerir gerentes e proprietários.',403);
-    return transaction(()=>{const result=createUser(body,role);audit(user,'Utilizador',`Criou a conta #${result.id} (${role})`);return result;});
+    return transaction(()=>{const result=createUser(body,role);if(user.role==='gerente'){const defaults=permissions(role);const initial=Object.fromEntries(Object.keys(defaults).map(key=>[key,defaults[key]&&user.permissions[key]]));run('UPDATE users SET permissions=? WHERE id=?',JSON.stringify(initial),result.id);}audit(user,'Utilizador',`Criou a conta #${result.id} (${role})`);return result;});
   }
   if(path==='/api/profile' && req.method==='POST') return transaction(()=>{
     rejectIdentity(body);const p=contacts(body);
@@ -265,7 +282,19 @@ async function api(req, res, path, body) {
     if(user.role==='gerente' && (target.role!=='vendedor' || role!=='vendedor')) fail('Apenas o proprietário pode gerir este perfil.',403);
     if(target.role==='proprietario') fail('O proprietário só pode ser substituído por transferência de propriedade.',403);
     if(role==='gerente' && one("SELECT id FROM users WHERE role='gerente' AND deleted_at IS NULL AND id<>?",target.id)) fail('Já existe um gerente. Remova ou altere o gerente atual primeiro.',409);
-    run('UPDATE users SET role=?,active=? WHERE id=?',role,Number(body.active),target.id);run('DELETE FROM sessions WHERE user_id=?',target.id);audit(user,'Permissões',`${target.name}: ${role}, ${body.active ? 'ativo' : 'inativo'}`);return {ok:true};
+    let configured=role===target.role?JSON.parse(target.permissions||'{}'):{};
+    if(body.permissions!==undefined){
+      if(!body.permissions||typeof body.permissions!=='object'||Array.isArray(body.permissions))fail('Permissões inválidas.');
+      for(const [key,value] of Object.entries(body.permissions)){
+        if(!Object.hasOwn(permissionLabels,key)||typeof value!=='boolean')fail('Permissão inválida.');
+        if(role==='vendedor'&&!sellerKeys.includes(key)&&value)fail('Vendedores não podem gerir stock, equipa, atividades ou regras fiscais.',403);
+        if(user.role==='gerente'&&value&&!user.permissions[key])fail('Não pode conceder um acesso que não possui.',403);
+      }
+      configured={...configured,...body.permissions};
+    }
+    const effective=permissions(role,configured);
+    if(!effective.cash&&one('SELECT id FROM shifts WHERE user_id=? AND closed IS NULL',target.id))fail('Feche primeiro o caixa deste utilizador antes de retirar o acesso ao caixa.');
+    run('UPDATE users SET role=?,active=?,permissions=? WHERE id=?',role,Number(body.active),JSON.stringify(effective),target.id);run('DELETE FROM sessions WHERE user_id=?',target.id);audit(user,'Permissões',`${target.name}: ${role}, ${body.active ? 'ativo' : 'inativo'}; acessos ${JSON.stringify(effective)}`);return {ok:true};
   });
   if(path==='/api/users/remove' && req.method==='POST') return transaction(()=>{
     manage(user);const target=one('SELECT * FROM users WHERE id=? AND deleted_at IS NULL',body.id);
@@ -303,7 +332,7 @@ const server=http.createServer(async(req,res)=>{
       let body={};try{body=raw ? JSON.parse(raw) : {};}catch{fail('JSON inválido.');}if(!body || typeof body!=='object' || Array.isArray(body)) fail('Pedido inválido.');
       const result=await api(req,res,url.pathname,body);res.setHeader('Content-Type','application/json; charset=utf-8');res.setHeader('Cache-Control','no-store');res.end(JSON.stringify(result));
     } else {
-      const files={'/':'index.html','/app.js':'app.js','/calculations.js':'calculations.js','/tax.js':'tax.js','/validation.js':'validation.js','/style.css':'style.css'};const file=files[url.pathname];if(!file) fail('Página não encontrada.',404);
+      const files={'/':'index.html','/app.js':'app.js','/calculations.js':'calculations.js','/tax.js':'tax.js','/validation.js':'validation.js','/permissions.js':'permissions.js','/style.css':'style.css'};const file=files[url.pathname];if(!file) fail('Página não encontrada.',404);
       res.setHeader('Content-Type',({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'})[extname(file)]);res.end(readFileSync(new URL(`./public/${file}`,import.meta.url)));
     }
   } catch(e){res.statusCode=e.status || (String(e.message).includes('UNIQUE') ? 409 : 500);res.setHeader('Content-Type','application/json');res.end(JSON.stringify({error:e.status ? e.message : res.statusCode===409 ? 'Já existe um registo com esse email, BI ou código de barras.' : 'Erro interno. Tente novamente.'}));if(res.statusCode===500) console.error(e);}

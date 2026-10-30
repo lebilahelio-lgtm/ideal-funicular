@@ -101,3 +101,16 @@ Com Python Playwright instalado e Chromium disponível em `/usr/bin/chromium`, e
 Novos utilizadores precisam de pelo menos dois nomes, apenas com letras e espaços. As iniciais de cada palavra são convertidas em maiúsculas durante a escrita e no servidor. Os nomes de produtos aceitam letras, espaços e até três algarismos no total, sem pontuação. O telefone é opcional; quando preenchido, mantém a validação do indicativo. Nos cadastros e alterações de contactos, o email deve ser Gmail, apenas com letras minúsculas, números e sublinhado antes de @gmail.com, sem espaços nem pontos no nome (exemplo: helio_lebila@gmail.com). Os dados históricos e as identidades já registadas são preservados.
 
 A janela de credenciais iniciais permite copiar a palavra-passe, mesmo quando está ocultada pelo botão de olho. A senha não fica guardada em texto legível. Em A minha conta, Recuperar acesso encaminha para o fluxo de recuperação existente; o envio de códigos depende de configurar Resend ou Twilio.
+
+### Acessos por pessoa
+
+Em **Equipa e permissões → Acesso**, o proprietário escolhe as áreas do gerente e de cada vendedor. O gerente, quando autorizado a gerir a equipa, pode definir os acessos dos vendedores, sem conceder acessos que não possui. O proprietário mantém sempre acesso total; ninguém altera o seu próprio acesso.
+
+| Área ou operação | Gerente | Vendedor |
+| --- | --- | --- |
+| Visão geral, vendas, caixa, histórico de vendas e consulta de stock | Configurável pelo proprietário | Configurável pelo proprietário ou gerente autorizado |
+| Cadastro/edição de produtos e entradas de stock | Configurável pelo proprietário | Sempre bloqueado |
+| Atividades internas, consulta fiscal e gestão de equipa | Configurável pelo proprietário | Sempre bloqueado |
+| Enquadramento, taxas fiscais e transferência de propriedade | Apenas proprietário | Sempre bloqueado |
+
+Retirar a consulta de stock também retira a alteração direta. O ponto de venda continua a mostrar os produtos e quantidades disponíveis necessários para vender, sem custos de aquisição. As vendas baixam o stock automaticamente. Retirar o caixa impede vender; é necessário fechar um turno aberto antes de retirar esse acesso. Os vendedores veem apenas os seus próprios recibos e turnos. As restrições são verificadas no servidor, os dados administrativos não autorizados são omitidos da resposta e os menus acompanham as permissões. Alterações ficam na auditoria e terminam as sessões da pessoa afetada. As contas existentes conservam os acessos habituais até serem configuradas.
