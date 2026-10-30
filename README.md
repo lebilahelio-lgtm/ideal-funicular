@@ -60,7 +60,7 @@ Os testes usam um transporte simulado para os códigos, sem enviar mensagens rea
 
 ## Interface e filtros
 
-A identidade TT LEBILA usa azul escuro e azul claro, tipografia maior e contraste reforçado. Campos de BI, nome, telefone, email e valores têm validação durante a escrita e no servidor. O BI exige 9 algarismos, 2 letras e 3 algarismos; os zeros iniciais são significativos e não são inventados pelo sistema.
+A identidade TT LEBILA usa azul escuro e azul claro, tipografia maior e contraste reforçado. Cadastro e login partilham um fundo azul contínuo, com marca ampliada e centralizada e o texto de apresentação preservado. Campos obrigatórios exibem um asterisco vermelho, uma legenda e a indicação nativa/acessível `required`; filtros e campos opcionais não recebem o asterisco. A marcação acompanha os diálogos criados dinamicamente e os campos fiscais que só são obrigatórios ao ativar o cálculo. Campos de BI, nome, telefone, email e valores têm validação durante a escrita e no servidor. O BI exige 9 algarismos, 2 letras e 3 algarismos; os zeros iniciais são significativos e não são inventados pelo sistema.
 
 Valores numéricos separam milhares com espaços enquanto escreve (`1 234 567,89`). Quantidades permitem até três casas decimais e dinheiro até duas. BI, telefone, código de barras e códigos temporários não recebem separadores de milhares. O envio converte os valores para números, sem os separadores.
 

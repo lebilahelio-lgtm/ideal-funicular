@@ -2,6 +2,10 @@ import os, subprocess, tempfile, time, shutil, sqlite3, json
 from pathlib import Path
 Path("/tmp/loja-ui-test").mkdir(exist_ok=True)
 from playwright.sync_api import sync_playwright
+def assert_required_markers(page):
+    missing=page.evaluate("""()=>Array.from(document.querySelectorAll('input:required,select:required,textarea:required')).filter(el=>el.offsetParent!==null).filter(el=>el.getAttribute('aria-required')!=='true'||!Array.from(el.labels||[]).some(label=>label.querySelector('.required-marker'))).map(el=>el.id||el.name)""")
+    assert missing==[], 'Required fields without red markers or accessibility state: '+str(missing)
+
 folder=tempfile.mkdtemp(prefix='loja-browser-')
 proc=subprocess.Popen(['node','server.js'],cwd=str(Path(__file__).resolve().parent.parent),env={**os.environ,'PORT':'3001','DATA_DIR':folder},stdout=subprocess.PIPE,stderr=subprocess.PIPE)
 try:
@@ -12,6 +16,21 @@ try:
         errors=[]
         page.on('pageerror',lambda e:errors.append(str(e)))
         page.goto('http://127.0.0.1:3001')
+        page.get_by_role('heading',name='Cadastrar o proprietário').wait_for()
+        assert_required_markers(page)
+        assert page.locator('#auth-form input[required]').count()==5
+        assert page.locator('#auth-form .required-marker').count()==6
+        assert float(page.locator('.auth-hero .brand-name').evaluate('(el)=>parseFloat(getComputedStyle(el).fontSize)'))>=40
+        brand=page.locator('.auth-hero .brand').bounding_box()
+        assert abs(brand['x']+brand['width']/2-720)<3
+        assert page.locator('#name').evaluate("el=>{const color=getComputedStyle(el.labels[0].querySelector('.required-marker')).color;const values=color.match(/\\d+/g).map(Number);return values[0]>values[1]*1.5&&values[0]>values[2];}")
+        page.screenshot(path='/tmp/loja-ui-test/cadastro-azul.png',full_page=True)
+        page.set_viewport_size({'width':390,'height':844})
+        assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+        brand=page.locator('.auth-hero .brand').bounding_box()
+        assert abs(brand['x']+brand['width']/2-195)<3
+        page.screenshot(path='/tmp/loja-ui-test/cadastro-azul-mobile.png',full_page=True)
+        page.set_viewport_size({'width':1440,'height':1050})
         page.locator('#name').fill('Ana Silva')
         page.locator('#bi').fill('009763932CA042')
         page.locator('#birth_date').fill('1990-02-28')
@@ -31,6 +50,8 @@ try:
         page.get_by_role('heading',name='Visão geral',exact=True).wait_for()
         page.get_by_role('button',name='Produtos e stock',exact=True).click()
         page.get_by_role('button',name='Adicionar produto').click()
+        assert_required_markers(page)
+        assert not page.locator('#tax_rule_id').evaluate('(el)=>el.required')
         page.locator('#name').fill('Arroz branco')
         page.locator('#unit').select_option('kg')
         page.locator('#barcode').fill('12345')
@@ -41,6 +62,7 @@ try:
         assert page.locator('#price').input_value()=='1 000'
         page.get_by_role('button',name='Guardar produto').click()
         page.get_by_role('button',name='Entrada',exact=True).click()
+        assert_required_markers(page)
         page.locator('#packs').fill('2')
         page.locator('#reason').fill('Compra inicial')
         page.get_by_role('button',name='Confirmar entrada').click()
@@ -59,6 +81,7 @@ try:
         page.locator('#modal').wait_for(state='hidden')
         page.get_by_role('button',name='Ponto de venda',exact=True).click()
         page.get_by_role('button',name='Abrir caixa',exact=True).click()
+        assert_required_markers(page)
         page.locator('#opening').fill('5000')
         page.locator('#shift-form').get_by_role('button',name='Abrir caixa',exact=True).click()
         page.locator('#modal').wait_for(state='hidden')
@@ -70,6 +93,8 @@ try:
         assert page.get_by_role('button',name='Finalizar e emitir recibo').is_disabled()
         page.locator('[data-quantity]').fill('1.5')
         page.locator('[data-quantity]').press('Tab')
+        assert_required_markers(page)
+        assert not page.locator('#customer').evaluate('(el)=>el.required')
         page.locator('#customer').fill('Cliente multiproduto')
         page.locator('#discount').fill('100')
         page.get_by_role('button',name='Continuar a adicionar produtos').click()
@@ -123,6 +148,7 @@ try:
         assert page.locator('.metric-value').first.inner_text()
         page.get_by_role('button',name='Equipa e permissões',exact=True).click()
         page.get_by_role('button',name='Adicionar pessoa').click()
+        assert_required_markers(page)
         page.locator('#name').fill('João')
         page.locator('#bi').fill('009763933CA042')
         page.locator('#birth_date').fill('1995-03-15')
@@ -210,6 +236,8 @@ try:
         page.get_by_role('navigation').get_by_role('button',name='IVA e regras fiscais',exact=True).click()
         page.get_by_role('button',name='Nova regra',exact=True).click()
         page.locator('#name').fill('Regra fictícia de teste')
+        assert_required_markers(page)
+        assert page.locator('#legal_basis').evaluate('(el)=>el.required')
         page.locator('#rate').fill('14')
         page.locator('#legal_basis').fill('TESTE DE CÁLCULO, sem validade legal')
         page.get_by_role('button',name='Guardar regra',exact=True).click()
@@ -222,7 +250,10 @@ try:
         page.get_by_role('button',name='Guardar regra',exact=True).click()
         page.locator('#modal').wait_for(state='hidden')
         page.locator('#regime').select_option('geral')
+        assert not page.locator('#company_nif').evaluate('(el)=>el.required')
         page.locator('#enabled').select_option('true')
+        assert page.locator('#company_nif').evaluate('(el)=>el.required')
+        assert_required_markers(page)
         page.locator('#price_mode').select_option('excluded')
         page.locator('#company_nif').fill('5000000000')
         page.locator('#company_address').fill('Morada fictícia de teste')
@@ -270,7 +301,7 @@ try:
         assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'mobile horizontal overflow'
         assert not errors, errors
         browser.close()
-        print('PASS: seller/manager registration, unique leadership UI, incomplete-response handling, live validation, grouped numbers, password visibility/strength, filters, simulated recovery UI, real password reset, multi-product receipt, underpayment down to one cent, electronic excess, cash shortage, pending VAT, rule configuration, product classification, mixed VAT receipt, tax report and desktop/mobile layout; no JavaScript errors.')
+        print('PASS: seller/manager registration, unique leadership UI, incomplete-response handling, live validation, grouped numbers, password visibility/strength, filters, simulated recovery UI, real password reset, multi-product receipt, underpayment down to one cent, electronic excess, cash shortage, pending VAT, rule configuration, product classification, mixed VAT receipt, tax report, required markers and conditional requirements, centered blue registration/login and desktop/mobile layout; no JavaScript errors.')
 except Exception:
     try:
         print('Browser flow failed; no credentials logged.')
