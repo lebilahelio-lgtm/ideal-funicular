@@ -99,3 +99,5 @@ Com Python Playwright instalado e Chromium disponível em `/usr/bin/chromium`, e
 ### Validação de nomes e contactos
 
 Novos utilizadores precisam de pelo menos dois nomes, apenas com letras e espaços. As iniciais de cada palavra são convertidas em maiúsculas durante a escrita e no servidor. Os nomes de produtos aceitam letras, espaços e até três algarismos no total, sem pontuação. O telefone é opcional; quando preenchido, mantém a validação do indicativo. Nos cadastros e alterações de contactos, o email deve ser Gmail, apenas com letras minúsculas, números e sublinhado antes de @gmail.com, sem espaços nem pontos no nome (exemplo: helio_lebila@gmail.com). Os dados históricos e as identidades já registadas são preservados.
+
+A janela de credenciais iniciais permite copiar a palavra-passe, mesmo quando está ocultada pelo botão de olho. A senha não fica guardada em texto legível. Em A minha conta, Recuperar acesso encaminha para o fluxo de recuperação existente; o envio de códigos depende de configurar Resend ou Twilio.

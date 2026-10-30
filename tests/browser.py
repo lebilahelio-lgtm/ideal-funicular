@@ -44,6 +44,12 @@ try:
         page.get_by_role('button',name='Criar conta do proprietário').click()
         page.locator('.credential code').wait_for()
         initial_password=page.locator('.credential code').inner_text()
+        page.context.grant_permissions(['clipboard-read','clipboard-write'])
+        page.get_by_role('button',name='Ocultar palavra-passe',exact=True).click()
+        page.get_by_role('button',name='Copiar palavra-passe',exact=True).click()
+        page.get_by_text('Palavra-passe copiada.',exact=True).wait_for()
+        assert page.evaluate('navigator.clipboard.readText()')==initial_password
+        page.locator('#modal').get_by_role('button',name='Mostrar palavra-passe',exact=True).click()
         page.get_by_role('button',name='Já guardei a palavra-passe').click()
         page.screenshot(path='/tmp/loja-ui-test/tt-login.png',full_page=True)
         page.locator('#identifier').fill('ana@gmail.com')
@@ -210,6 +216,10 @@ try:
         page.locator('#modal [data-action="close"]').last.click()
         page.get_by_role('button',name='A minha conta',exact=True).click()
         assert page.locator('#app #name').count()==0
+        page.get_by_role('button',name='Recuperar acesso',exact=True).click()
+        page.get_by_role('heading',name='Recuperar a sua palavra-passe').wait_for()
+        assert 'Não é possível mostrar a palavra-passe atual' in page.locator('#modal').inner_text()
+        page.get_by_role('button',name='Voltar à conta',exact=True).click()
         page.locator('#current_password').fill(initial_password)
         page.locator('#password').fill('abcdefgh')
         assert not page.locator('#password').evaluate('(el)=>el.checkValidity()')
