@@ -180,7 +180,9 @@ try:
         page.locator('.history-summary').wait_for()
         assert page.locator('#history-results tbody tr').count()==1
         assert page.locator('#scope option[value="all"]').inner_text()=='Histórico geral'
-        assert page.locator('label[for="q"]').inner_text()=='Pesquisa recibo'
+        assert page.locator('label[for="q"]').inner_text()=='Pesquisar por'
+        assert page.locator('.history-search-control #q').count()==1
+        assert page.locator('.history-search-control #search_by').count()==1
         assert page.locator('#search_by option').count()==3
         with page.expect_response('**/api/sales/history'):
             page.locator('#scope').select_option('mine')
