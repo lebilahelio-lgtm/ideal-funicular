@@ -39,7 +39,8 @@ try:
         page.locator('#bi').fill('009763932CA042')
         page.locator('#birth_date').fill('1990-02-28')
         page.locator('#phone').fill('+244923456789')
-        page.locator('#email').fill('ana@gmail.com')
+        page.locator('#email').fill('ANA@GMAIL.COM')
+        assert page.locator('#email').input_value()=='ana@gmail.com'
         page.get_by_role('button',name='Criar conta do proprietário').click()
         page.locator('.credential code').wait_for()
         initial_password=page.locator('.credential code').inner_text()

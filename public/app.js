@@ -28,7 +28,7 @@ function numericDisplay(value,decimals=3){const negative=String(value??'').trim(
 const requiredMarker=()=>'<span class="required-marker" aria-hidden="true">*</span>';
 function inputLabel(label,id,required){return `<label for="${id}">${esc(label)}${required?' '+requiredMarker():''}</label>`;}
 function field(label,name,type='text',value='',extra='',hint=''){
- const password=type==='password',numeric=type==='number';if(type==='tel')extra+=' data-phone';if(type==='email')extra+=' pattern="[a-zA-Z0-9]+(?:\\.[a-zA-Z0-9]+)*@gmail\\.com" placeholder="nome@gmail.com"';if(type==='text'&&name==='barcode')extra+=' maxlength="80"';
+ const password=type==='password',numeric=type==='number';if(type==='tel')extra+=' data-phone';if(type==='email')extra+=' pattern="[a-z0-9_]+@gmail\\.com" placeholder="nome@gmail.com"';if(type==='text'&&name==='barcode')extra+=' maxlength="80"';
  if(numeric){const decimals=extra.includes('step="0.01"')?2:extra.includes('step="0.001"')?3:0;extra=extra.replace(/\bmin=/g,'data-min=').replace(/\bmax=/g,'data-max=').replace(/step="[^"]*"/g,'');extra+=` data-number data-decimals="${decimals}" inputmode="decimal"`;type='text';value=numericDisplay(value,decimals);}
  if(password && name==='password' && !extra.includes('current-password'))extra+=' data-strong-password';
  return `<div class="field">${inputLabel(label,name,/\brequired\b/.test(extra))}<div class="${password?'password-wrap':'input-wrap'}"><input id="${name}" name="${name}" type="${type}" value="${esc(value)}" ${extra}>${password?`<button class="eye-button" type="button" data-eye="${name}" aria-label="Mostrar palavra-passe" aria-pressed="false">${icon('eye')}</button>`:''}</div>${hint?`<small class="field-hint">${esc(hint)}</small>`:''}</div>`;
@@ -185,7 +185,7 @@ document.addEventListener('input',e=>{const el=e.target;if(!(el instanceof HTMLI
  if(el.hasAttribute('data-bi')){el.value=el.value.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,14);el.setCustomValidity(el.value&&!/^\d{9}[A-Z]{2}\d{3}$/.test(el.value)?'O BI deve ter 9 algarismos, 2 letras e 3 algarismos. Exemplo: 009763932CA042.':'');}
  if(el.hasAttribute('data-person-name')||el.hasAttribute('data-product-name')){const start=el.selectionStart,end=el.selectionEnd;el.value=titleName(el.value);el.setSelectionRange(start,end);el.setCustomValidity(nameError(el.value,el.hasAttribute('data-product-name')));}
  if(el.hasAttribute('data-phone')){el.value=el.value.replace(/[^+0-9 ()-]/g,'').replace(/(?!^)\+/g,'');}
- if(el.type==='email')el.setCustomValidity(el.value&& !gmailValid(el.value)?'Use um email Gmail válido, por exemplo nome@gmail.com.':'');
+ if(el.type==='email'){el.value=el.value.toLowerCase();el.setCustomValidity(el.value&&!gmailValid(el.value)?'Use letras minúsculas, números ou _ antes de @gmail.com. Não são permitidos espaços nem pontos no nome.':'');}
  if(el.hasAttribute('data-code'))el.value=el.value.replace(/\D/g,'').slice(0,6);
  if(el.hasAttribute('data-strong-password'))el.setCustomValidity(el.value&&!(el.value.length>=8&&/[A-Za-z]/.test(el.value)&&/\d/.test(el.value)&&/[^a-zA-Z0-9\s]/.test(el.value))?'Use pelo menos 8 caracteres, letras, números e um carácter especial.':'');
 });

@@ -23,7 +23,7 @@ test('complete shop workflow, atomic stock, permissions and cash reconciliation'
   assert.equal((await request('setup')).body.required,true);
   const admin={name:'ana silva',bi:'009763932CA042',birth_date:'1990-02-28',phone:'',email:'ana@gmail.com'};
   for(const name of ['Ana','Ana 2','Ana-Silva','Ana @Silva'])assert.equal((await request('setup',{...admin,name})).status,400);
-  for(const email of ['ana silva@gmail.com','ana@ gmail.com','ana@example.com'])assert.equal((await request('setup',{...admin,email})).status,400);
+  for(const email of ['ana silva@gmail.com','ana@ gmail.com','ana@example.com','ana.silva@gmail.com','ana+silva@gmail.com','ana-silva@gmail.com'])assert.equal((await request('setup',{...admin,email})).status,400);
   const setup=await request('setup',admin);assert.equal(setup.status,200);assert.ok(setup.body.password.length>=20);
   assert.equal((await request('setup',{name:'X'})).status,409);
   owner=(await request('login',{identifier:'ANA@GMAIL.COM',password:setup.body.password})).cookie;
@@ -70,9 +70,9 @@ test('complete shop workflow, atomic stock, permissions and cash reconciliation'
   assert.equal((await request('profile',{email:'hijack@gmail.com',phone:'923456789',name:'Changed'},seller)).status,400);
   assert.equal((await request('users/profile',{id:joao.id,email:'hijack@gmail.com',phone:'923456789',bi:'009763934CA042'})).status,400);
   assert.equal((await request('users/access',{id:joao.id,role:'vendedor',active:true,birth_date:'1999-01-01'})).status,400);
-  assert.equal((await request('profile',{email:'joao.new@gmail.com',phone:'+244923456781'},seller)).status,200);
+  assert.equal((await request('profile',{email:'joao_new@gmail.com',phone:'+244923456781'},seller)).status,200);
   assert.equal((await request('login',{identifier:'joao@gmail.com',password:created.body.password})).status,401);
-  const second=(await request('login',{identifier:'joao.new@gmail.com',password:created.body.password})).cookie;
+  const second=(await request('login',{identifier:'joao_new@gmail.com',password:created.body.password})).cookie;
   assert.ok(second);
   assert.equal((await request('password',{current_password:'wrong',password:'NovaSenhaSegura123!'},seller)).status,400);
   assert.equal((await request('password',{current_password:created.body.password,password:'NovaSenhaSegura123!'},seller)).status,200);
@@ -109,7 +109,7 @@ test('complete shop workflow, atomic stock, permissions and cash reconciliation'
   const replacement=await request('users',another);assert.equal(replacement.status,200);
   assert.match(replacement.body.password,/[A-Za-z]/);assert.match(replacement.body.password,/[0-9]/);assert.match(replacement.body.password,/[^A-Za-z0-9]/);
   for(const weak of ['short1!','abcdefgh','12345678','Abcd1234','Abcdef!!'])assert.equal((await request('password',{current_password:setup.body.password,password:weak})).status,400);
-  assert.equal((await request('profile',{email:'ana.new@gmail.com',phone:'923456789'})).status,200);
+  assert.equal((await request('profile',{email:'ana_new@gmail.com',phone:'923456789'})).status,200);
   const emailFreed=await request('users',{...another,role:'vendedor',bi:'009763938CA042',email:'ana@gmail.com'});assert.equal(emailFreed.status,200);
   const oldState=(await request('state')).body;
   assert.equal(oldState.users.filter(u=>u.role==='proprietario').length,1);assert.equal(oldState.users.filter(u=>u.role==='gerente').length,1);
@@ -117,7 +117,7 @@ test('complete shop workflow, atomic stock, permissions and cash reconciliation'
   assert.equal((await request('users/transfer-owner',{id:replacement.body.id,password:'wrong'})).status,400);
   assert.equal((await request('logout',{})).status,200);
   assert.equal((await request('state')).status,401);
-  owner=(await request('login',{identifier:'ana.new@gmail.com',password:setup.body.password})).cookie;
+  owner=(await request('login',{identifier:'ana_new@gmail.com',password:setup.body.password})).cookie;
   assert.equal((await request('users/transfer-owner',{id:replacement.body.id,password:setup.body.password})).status,200);
   assert.equal((await request('state')).status,401);
   owner=(await request('login',{identifier:another.email,password:replacement.body.password})).cookie;
@@ -168,7 +168,7 @@ test('complete shop workflow, atomic stock, permissions and cash reconciliation'
   assert.equal((await request('fiscal/settings',{...fiscalSettings,confirmed:false})).status,400);
   assert.equal((await request('fiscal/settings',{...fiscalSettings,regime:'simplificado'})).status,400);
   assert.equal((await request('fiscal/settings',fiscalSettings)).status,200);
-  const previousOwner=(await request('login',{identifier:'ana.new@gmail.com',password:setup.body.password})).cookie;
+  const previousOwner=(await request('login',{identifier:'ana_new@gmail.com',password:setup.body.password})).cookie;
   assert.equal((await request('fiscal/rules',ruleBody,previousOwner)).status,403);
   assert.equal((await request('fiscal/settings',fiscalSettings,previousOwner)).status,403);
   assert.equal((await request('shifts/open',{opening:0})).status,200);

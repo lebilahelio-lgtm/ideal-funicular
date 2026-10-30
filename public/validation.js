@@ -9,4 +9,4 @@ export function nameError(value,product=false){
  }else if(!/^(?:\p{L}[\p{L}\p{M}]*)(?: +\p{L}[\p{L}\p{M}]*)+$/u.test(name))return 'Introduza pelo menos dois nomes, apenas com letras e espaços.';
  return '';
 }
-export const gmailValid=value=>/^[a-z0-9]+(?:\.[a-z0-9]+)*@gmail\.com$/i.test(String(value??'').trim());
+export const gmailValid=value=>/^[a-z0-9_]+@gmail\.com$/.test(String(value??''));
