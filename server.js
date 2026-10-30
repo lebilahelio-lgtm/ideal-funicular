@@ -1,3 +1,4 @@
+import {titleName,nameError,gmailValid} from './public/validation.js';
 import http from 'node:http';
 import {calculateTaxBasket} from './public/tax.js';
 import {migrateFiscal,fiscalState,saveFiscalSettings,saveTaxRule,taxReport} from './fiscal.js';
@@ -61,8 +62,10 @@ function session(res,id,recovery=false){
 const recovery=new Recovery(db);
 function contacts(body) {
  const email=text(body.email,'Email',254).toLowerCase();
- if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail('Email inválido.');
- const phone=text(body.phone,'Telefone',30);
+ if(!gmailValid(email)) fail('Use um email Gmail válido, por exemplo nome@gmail.com.');
+ const phone=String(body.phone??'').trim();
+ if(!phone)return {email,phone:''};
+ if(phone.length>30)fail('Telefone inválido.');
  if(!/^\+?[\d ()-]{7,30}$/.test(phone)) fail('Telefone inválido.');
  const digits=phone.replace(/\D/g,'');
  const normalised=phone.startsWith('+')?'+'+digits:digits.length===9?'+244'+digits:'+'+digits;
@@ -70,8 +73,8 @@ function contacts(body) {
  return {email,phone:normalised};
 }
 function identity(body) {
- const name=text(body.name,'Nome'),bi=text(body.bi,'BI',14).toUpperCase(),birth_date=text(body.birth_date,'Data de nascimento',10);
- if(!/^[\p{L}\p{M} .’'-]+$/u.test(name) || name.length<2) fail('O nome deve conter apenas letras, espaços, pontos, apóstrofos ou hífen.');
+ const name=titleName(text(body.name,'Nome')),bi=text(body.bi,'BI',14).toUpperCase(),birth_date=text(body.birth_date,'Data de nascimento',10);
+ if(nameError(name))fail(nameError(name));
  if(!/^\d{9}[A-Z]{2}\d{3}$/.test(bi)) fail('BI inválido. Exemplo: 009763932CA042.');
  if(!/^\d{4}-\d{2}-\d{2}$/.test(birth_date) || Number.isNaN(Date.parse(birth_date)) || new Date(birth_date).toISOString().slice(0,10)!==birth_date || birth_date>new Date().toISOString().slice(0,10) || birth_date<'1900-01-01') fail('Data de nascimento inválida.');
  return {name,bi,birth_date,...contacts(body)};
@@ -168,7 +171,8 @@ async function api(req, res, path, body) {
   });
   if (path === '/api/products' && req.method === 'POST') {
     manage(user);
-    const name=text(body.name,'Produto'), category=text(body.category,'Categoria'), unit=text(body.unit,'Unidade'), pack=text(body.pack_type,'Embalagem');
+    if(nameError(body.name,true))fail(nameError(body.name,true));
+    const name=titleName(text(body.name,'Produto')), category=text(body.category,'Categoria'), unit=text(body.unit,'Unidade'), pack=text(body.pack_type,'Embalagem');
     if (!['un','kg','L','g','mL'].includes(unit)) fail('Unidade não suportada.');
     const size=number(body.pack_size,'Conteúdo da embalagem',0.001), cost=money(body.pack_cost,'Custo'), price=money(body.price,'Preço'), minimum=number(body.minimum,'Stock mínimo'), barcode=body.barcode ? text(body.barcode,'Código de barras',80) : null;
     return transaction(()=>{
@@ -299,7 +303,7 @@ const server=http.createServer(async(req,res)=>{
       let body={};try{body=raw ? JSON.parse(raw) : {};}catch{fail('JSON inválido.');}if(!body || typeof body!=='object' || Array.isArray(body)) fail('Pedido inválido.');
       const result=await api(req,res,url.pathname,body);res.setHeader('Content-Type','application/json; charset=utf-8');res.setHeader('Cache-Control','no-store');res.end(JSON.stringify(result));
     } else {
-      const files={'/':'index.html','/app.js':'app.js','/calculations.js':'calculations.js','/tax.js':'tax.js','/style.css':'style.css'};const file=files[url.pathname];if(!file) fail('Página não encontrada.',404);
+      const files={'/':'index.html','/app.js':'app.js','/calculations.js':'calculations.js','/tax.js':'tax.js','/validation.js':'validation.js','/style.css':'style.css'};const file=files[url.pathname];if(!file) fail('Página não encontrada.',404);
       res.setHeader('Content-Type',({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'})[extname(file)]);res.end(readFileSync(new URL(`./public/${file}`,import.meta.url)));
     }
   } catch(e){res.statusCode=e.status || (String(e.message).includes('UNIQUE') ? 409 : 500);res.setHeader('Content-Type','application/json');res.end(JSON.stringify({error:e.status ? e.message : res.statusCode===409 ? 'Já existe um registo com esse email, BI ou código de barras.' : 'Erro interno. Tente novamente.'}));if(res.statusCode===500) console.error(e);}

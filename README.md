@@ -95,3 +95,7 @@ Os recibos são **comprovativos internos sem validade fiscal**, não faturas cer
 ## Teste de navegador opcional
 
 Com Python Playwright instalado e Chromium disponível em `/usr/bin/chromium`, execute `python3 tests/browser.py`. O teste usa uma base separada e cobre cadastro de vendedor e gerente, resposta vazia, filtros, senhas, separação de milhares, venda por peso com vários produtos no mesmo recibo, insuficiência até um cêntimo, desconto inválido, excesso eletrónico, falta no caixa e layout móvel. Não altera a base real.
+
+### Validação de nomes e contactos
+
+Novos utilizadores precisam de pelo menos dois nomes, apenas com letras e espaços. As iniciais de cada palavra são convertidas em maiúsculas durante a escrita e no servidor. Os nomes de produtos aceitam letras, espaços e até três algarismos no total, sem pontuação. O telefone é opcional; quando preenchido, mantém a validação do indicativo. Nos cadastros e alterações de contactos, o email deve ser Gmail, sem espaços entre caracteres (exemplo: nome.apelido@gmail.com). Os dados históricos e as identidades já registadas são preservados.
