@@ -1,4 +1,4 @@
-# Loja Clara
+# TT LEBILA
 
 Aplicação web em português para uma pequena loja. Node.js 24 e SQLite, sem dependências externas. A base de dados é criada automaticamente e não contém contas ou dados de exemplo.
 
@@ -15,7 +15,7 @@ Porta padrão: `3000`. No primeiro acesso, cadastre o proprietário com nome, BI
 npm test
 ```
 
-O teste usa uma base temporária isolada e cobre autenticação, stock, venda fracionada, concorrência, recibos, trocos, fecho de caixa e permissões.
+Os testes usam bases temporárias isoladas e cobrem autenticação, stock, venda fracionada, concorrência, recibos, trocos, fecho de caixa e permissões.
 
 ## Funcionalidades
 
@@ -25,25 +25,48 @@ O teste usa uma base temporária isolada e cobre autenticação, stock, venda fr
 - Vendas e atualização de stock numa transação SQLite; preços, disponibilidade e permissões validados no servidor. Valores monetários em cêntimos de Kz.
 - Caixa individual: fundo inicial, pagamentos em dinheiro/TPA/transferência e conferência no fecho. O dinheiro esperado exclui trocos e pagamentos eletrónicos.
 - Recibos imprimíveis e reimprimíveis com vendedor, cliente, produtos, quantidades, preços, subtotal, desconto, total, valor entregue e troco.
-- Indicadores de hoje, gráfico diário de 14 dias e comparação de receita de dois períodos de 7 dias. Períodos agregados em UTC; datas apresentadas em Angola. Sem vendas anteriores, não se inventa uma tendência. Receita não é lucro.
+- Indicadores de hoje, gráfico diário de 14 dias e comparação de receita de dois períodos de 7 dias. Períodos e datas apresentados segundo o calendário de Angola (UTC+1). Sem vendas anteriores, não se inventa uma tendência. Receita não é lucro.
 - Alertas de stock mínimo, exportação CSV das últimas 100 vendas visíveis e histórico das últimas 100 atividades.
-- Proprietário gere todos os perfis; gerente gere vendedores e catálogo; vendedor consulta catálogo sem custos e os seus próprios caixas/recibos. Alterações de permissões revogam as sessões do utilizador afetado.
+- Um único proprietário e no máximo um gerente; o proprietário gere a equipa, o gerente gere vendedores e catálogo; vendedor consulta catálogo sem custos e os seus próprios caixas/recibos. Alterações de permissões revogam as sessões do utilizador afetado.
 
 ## Contas e autenticação
 
-Todos os acessos ao sistema exigem login por **email ou BI e palavra-passe**. Não há cadastro público após a configuração única do primeiro proprietário. Somente gerentes e proprietários cadastram pessoas; gerentes não podem criar ou administrar outros gerentes/proprietários.
+Todos os acessos ao sistema exigem login por **email ou BI e palavra-passe**. Não há cadastro público após a configuração única do primeiro proprietário. Somente o gerente e o proprietário cadastram pessoas; o gerente não pode criar ou administrar outro gerente/proprietário.
 
 O cadastro exige nome, BI angolano (ex.: `009763932CA042`), nascimento, telefone e email. BI e email são únicos. Nome, BI e nascimento são imutáveis, com validação na API e proteção por trigger SQLite. Email e telefone podem ser alterados pelo titular ou pela gestão autorizada.
 
-O servidor gera uma palavra-passe aleatória por conta, mostra-a uma única vez ao responsável pelo cadastro e guarda somente o hash scrypt. Entregue-a ao titular em privado. Em **A minha conta**, a pessoa pode alterar a palavra-passe, confirmando a atual; outras sessões são revogadas. A gestão pode repor palavras-passe de perfis que está autorizada a gerir, gerando outra senha e revogando as sessões anteriores. Não há envio automático por email.
+O servidor gera uma palavra-passe aleatória por conta, mostra-a uma única vez ao responsável pelo cadastro e guarda somente o hash scrypt. Entregue-a ao titular em privado. A palavra-passe gerada contém letras, números e símbolos. As novas palavras-passe exigem pelo menos **8 caracteres**, letras, números e um carácter especial. Os botões com olho permitem ver/ocultar o que está a escrever. Em **A minha conta**, a pessoa pode alterar a palavra-passe, confirmando a atual; outras sessões são revogadas. A gestão pode repor palavras-passe de perfis que está autorizada a gerir, gerando outra senha e revogando as sessões anteriores. A recuperação automática depende da configuração descrita abaixo.
 
 Compras/entradas, vendas, recibos, caixas e atividades apresentam data e hora do registo, com segundos e fuso de Angola. O instante é atribuído pelo servidor em UTC; não é editável pelo operador. O histórico de compras fica em **Produtos e stock** e inclui responsável, quantidade, custo e referência.
 
-A migração adiciona os novos campos sem apagar os registos. Contas de versões antigas sem email/BI precisam de migração de identidade antes de usar o novo login; o ambiente entregue não tinha contas anteriores.
+A migração adiciona os novos campos sem apagar os registos. Se uma versão antiga tiver mais de um proprietário ou gerente, mantém o primeiro ativo (ou o primeiro ID se nenhum estiver ativo) de cada perfil e converte os restantes em vendedores, registando a mudança no histórico. Contas removidas são desativadas e preservadas para os recibos e atividades; não são apagadas fisicamente. Um caixa aberto tem de ser fechado antes de remover o respetivo titular. O proprietário não pode ser removido nem remover-se: em **Transferir propriedade**, confirma a senha e escolhe outra pessoa ativa; o proprietário anterior passa a vendedor e ambas as sessões são terminadas. Contas de versões antigas sem email/BI precisam de migração de identidade antes de usar o novo login; o ambiente entregue não tinha contas anteriores.
+
+## Recuperação de acesso
+
+O botão **Esqueci a palavra-passe** permite pedir um código de 6 algarismos por email (Resend) ou SMS (Twilio). O destino é sempre o contacto já registado; o pedido não aceita destinos alternativos. O código expira aos **120 segundos**, só pode ser usado uma vez, permite no máximo 5 tentativas e é invalidado por um novo pedido. Há um intervalo mínimo de 60 segundos entre pedidos para a mesma identificação e limites por IP. Após validar o código, a sessão permite apenas definir uma nova palavra-passe; o acesso ao resto da loja fica bloqueado até essa alteração.
+
+A senha antiga **não pode ser visualizada ou enviada**, pois só o seu hash é guardado. O código não é devolvido pela API nem escrito nos logs. Reiniciar o servidor invalida códigos pendentes. Códigos nunca substituem permanentemente uma palavra-passe.
+
+Para ativar envio real, crie uma conta num dos fornecedores, configure um remetente autorizado e copie `.env.example` para `.env` na raiz do projeto. Preencha apenas os canais que usar:
+
+- Email: `RESEND_API_KEY` e `RECOVERY_EMAIL_FROM` (endereço de um domínio verificado no Resend).
+- SMS: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` e `TWILIO_FROM_NUMBER` (número de envio autorizado na Twilio).
+
+`npm start` lê `.env` automaticamente em Node.js 24. Também pode definir estas variáveis como secrets no Codespaces e reiniciar a aplicação. Nunca publique credenciais no GitHub. Os destinos de rede são `api.resend.com` e `api.twilio.com`; autorize-os no ambiente de execução quando necessário. Sem configuração, a interface informa que o envio está desativado e permite voltar ao login; a gestão pode continuar a repor senhas manualmente. O proprietário único deve guardar as credenciais ou configurar um canal de recuperação para não ficar sem acesso.
+
+Os testes usam um transporte simulado para os códigos, sem enviar mensagens reais. O envio real, a entrega ao destinatário e as condições comerciais de cada fornecedor precisam de ser validados depois de configurar a conta.
+
+## Interface e filtros
+
+A identidade TT LEBILA usa azul escuro e azul claro, tipografia maior e contraste reforçado. Campos de BI, nome, telefone, email e valores têm validação durante a escrita e no servidor. O BI exige 9 algarismos, 2 letras e 3 algarismos; os zeros iniciais são significativos e não são inventados pelo sistema.
+
+Valores numéricos separam milhares com espaços enquanto escreve (`1 234 567,89`). Quantidades permitem até três casas decimais e dinheiro até duas. BI, telefone, código de barras e códigos temporários não recebem separadores de milhares. O envio converte os valores para números, sem os separadores.
+
+Há pesquisa e categorias no catálogo e ponto de venda; os históricos de vendas, compras, caixas e atividades têm pesquisa, seleção de tipo e intervalo de datas. A equipa tem filtros de texto, perfil e estado. Estes filtros atuam sobre os registos carregados (limites documentados abaixo); não substituem paginação completa. Não há atualização em tempo real entre dispositivos.
 
 ## Dados e operação
 
-Variáveis opcionais: `PORT`, `HOST`, `DATA_DIR` (padrão `./data`) e `COOKIE_SECURE=1` ao servir exclusivamente por HTTPS. Sessões duram 12 horas; palavras-passe são protegidas com scrypt e salt. Não exponha a aplicação diretamente à Internet sem HTTPS, cópias de segurança e revisão operacional de segurança.
+Variáveis opcionais: `PORT`, `HOST`, `DATA_DIR` (padrão `./data`) e `COOKIE_SECURE=1` ao servir exclusivamente por HTTPS. Sessões normais duram 12 horas; uma sessão de recuperação pendente dura até 10 minutos e só permite alterar a senha; palavras-passe são protegidas com scrypt e salt. Não exponha a aplicação diretamente à Internet sem HTTPS, cópias de segurança e revisão operacional de segurança.
 
 A política de incorporação permite páginas da própria aplicação e da interface `chatgpt.com`. Para outro anfitrião de pré-visualização, configure `FRAME_ANCESTORS` com as origens HTTPS autorizadas, separadas por espaços. Numa instalação independente que não necessite de incorporação, use `FRAME_ANCESTORS="'none'"`. Esta configuração não cria uma ligação pública nem encaminha portas: essas capacidades dependem da plataforma onde a aplicação é executada.
 
@@ -51,4 +74,8 @@ Os dados persistem em `data/loja.sqlite`, com ficheiros WAL associados. Para uma
 
 ## Limites desta versão
 
-Os recibos são **comprovativos internos sem validade fiscal**, não faturas certificadas. A certificação fiscal, impostos e identificação fiscal do estabelecimento precisam de implementação conforme a legislação aplicável antes do uso fiscal. Esta versão também não inclui devoluções/anulações, vendas a crédito, movimentos manuais de saída do caixa, fornecedores estruturados, recuperação de palavra-passe por email, múltiplas lojas ou backups automáticos. Entradas de stock representam aquisições e não debitam automaticamente o caixa de vendas. O histórico da interface é limitado; os registos completos permanecem na base de dados. Não existe integração com balanças ou pagamento bancário: o método de pagamento é registado após confirmação pelo operador.
+Os recibos são **comprovativos internos sem validade fiscal**, não faturas certificadas. A certificação fiscal, impostos e identificação fiscal do estabelecimento precisam de implementação conforme a legislação aplicável antes do uso fiscal. Esta versão também não inclui devoluções/anulações, vendas a crédito, movimentos manuais de saída do caixa, fornecedores estruturados, múltiplas lojas ou backups automáticos. Entradas de stock representam aquisições e não debitam automaticamente o caixa de vendas. O histórico da interface é limitado; os registos completos permanecem na base de dados. Não existe integração com balanças ou pagamento bancário: o método de pagamento é registado após confirmação pelo operador.
+
+## Teste de navegador opcional
+
+Com Python Playwright instalado e Chromium disponível em `/usr/bin/chromium`, execute `python3 tests/browser.py`. O teste usa uma base separada e cobre cadastro de vendedor e gerente, resposta vazia, filtros, senhas, separação de milhares, venda por peso, recibo e layout móvel. Não altera a base real.

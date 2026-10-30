@@ -1,6 +1,7 @@
 import http from 'node:http';
+import { Recovery, deliveryStatus, sendRecovery } from './recovery.js';
 import { DatabaseSync } from 'node:sqlite';
-import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { randomBytes, randomInt, scryptSync, timingSafeEqual } from 'node:crypto';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve, extname } from 'node:path';
 
@@ -28,23 +29,54 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_bi ON users(bi COLLATE NOCASE);
 CREATE TRIGGER IF NOT EXISTS immutable_identity BEFORE UPDATE OF name,bi,birth_date ON users
 WHEN NEW.name IS NOT OLD.name OR (OLD.bi IS NOT NULL AND NEW.bi IS NOT OLD.bi) OR (OLD.birth_date IS NOT NULL AND NEW.birth_date IS NOT OLD.birth_date)
 BEGIN SELECT RAISE(ABORT,'Identidade imutável'); END;`);
+const extraColumns=new Set(all('PRAGMA table_info(users)').map(c=>c.name));
+if(!extraColumns.has('deleted_at')) db.exec('ALTER TABLE users ADD COLUMN deleted_at TEXT');
+const sessionColumns=new Set(all('PRAGMA table_info(sessions)').map(c=>c.name));
+if(!sessionColumns.has('recovery')) db.exec('ALTER TABLE sessions ADD COLUMN recovery INTEGER NOT NULL DEFAULT 0');
+// Preserve historical accounts while normalising legacy duplicate leadership roles.
+transaction(()=>{
+ for(const role of ['proprietario','gerente']) {
+  const holders=all('SELECT id FROM users WHERE role=? AND deleted_at IS NULL ORDER BY active DESC,id',role);
+  for(const holder of holders.slice(1)){run("UPDATE users SET role='vendedor' WHERE id=?",holder.id);audit({id:holders[0].id},'Migração de permissões',`Conta #${holder.id} passou a vendedor: apenas um ${role} permitido.`);}
+ }
+ run("UPDATE users SET username='account:'||id WHERE username NOT LIKE 'account:%'");
+});
+db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS one_owner ON users(role) WHERE role='proprietario' AND deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS one_manager ON users(role) WHERE role='gerente' AND deleted_at IS NULL;`);
+function generatePassword(){return 'Tt!'+randomBytes(12).toString('base64url')+randomInt(10,100);}
+function validPassword(value){
+ if(typeof value!=='string' || value.length<8 || value.length>200 || !/[a-zA-Z]/.test(value) || !/\d/.test(value) || !/[^a-zA-Z0-9\s]/.test(value)) fail('A palavra-passe deve ter pelo menos 8 caracteres, letras, números e um carácter especial.');
+ return value;
+}
+function session(res,id,recovery=false){
+ const token=randomBytes(32).toString('hex');
+ run('DELETE FROM sessions WHERE expires<?',Date.now());
+ run('INSERT INTO sessions(token,user_id,expires,recovery) VALUES(?,?,?,?)',token,id,Date.now()+(recovery?600000:43200000),Number(recovery));
+ res.setHeader('Set-Cookie',`session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${recovery?600:43200}${process.env.COOKIE_SECURE==='1'?'; Secure':''}`);
+}
+const recovery=new Recovery(db);
 function contacts(body) {
  const email=text(body.email,'Email',254).toLowerCase();
  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail('Email inválido.');
  const phone=text(body.phone,'Telefone',30);
- if(!/^\+?[\d ()-]{7,30}$/.test(phone) || phone.replace(/\D/g,'').length<7) fail('Telefone inválido.');
- return {email,phone};
+ if(!/^\+?[\d ()-]{7,30}$/.test(phone)) fail('Telefone inválido.');
+ const digits=phone.replace(/\D/g,'');
+ const normalised=phone.startsWith('+')?'+'+digits:digits.length===9?'+244'+digits:'+'+digits;
+ if(!/^\+[1-9]\d{6,14}$/.test(normalised)) fail('Use um telefone válido com indicativo, por exemplo +244 923 456 789.');
+ return {email,phone:normalised};
 }
 function identity(body) {
  const name=text(body.name,'Nome'),bi=text(body.bi,'BI',14).toUpperCase(),birth_date=text(body.birth_date,'Data de nascimento',10);
+ if(!/^[\p{L}\p{M} .’'-]+$/u.test(name) || name.length<2) fail('O nome deve conter apenas letras, espaços, pontos, apóstrofos ou hífen.');
  if(!/^\d{9}[A-Z]{2}\d{3}$/.test(bi)) fail('BI inválido. Exemplo: 009763932CA042.');
  if(!/^\d{4}-\d{2}-\d{2}$/.test(birth_date) || Number.isNaN(Date.parse(birth_date)) || new Date(birth_date).toISOString().slice(0,10)!==birth_date || birth_date>new Date().toISOString().slice(0,10) || birth_date<'1900-01-01') fail('Data de nascimento inválida.');
  return {name,bi,birth_date,...contacts(body)};
 }
 function rejectIdentity(body) { if(['name','bi','birth_date'].some(k=>Object.hasOwn(body,k))) fail('Nome, BI e data de nascimento não podem ser alterados.'); }
 function createUser(body,role) {
- const p=identity(body), password=randomBytes(18).toString('base64url');
- const id=Number(run('INSERT INTO users(name,username,password,role,email,bi,birth_date,phone) VALUES(?,?,?,?,?,?,?,?)',p.name,p.email,hash(password),role,p.email,p.bi,p.birth_date,p.phone).lastInsertRowid);
+ const p=identity(body), password=generatePassword();
+ if(role!=='vendedor' && one('SELECT id FROM users WHERE role=? AND deleted_at IS NULL',role)) fail(`Já existe um ${role==='gerente'?'gerente':'proprietário'}.`,409);
+ const id=Number(run('INSERT INTO users(name,username,password,role,email,bi,birth_date,phone) VALUES(?,?,?,?,?,?,?,?)',p.name,'account:'+randomBytes(16).toString('hex'),hash(password),role,p.email,p.bi,p.birth_date,p.phone).lastInsertRowid);
  return {id,email:p.email,password};
 }
 function hash(password) { const salt = randomBytes(16).toString('hex'); return salt + ':' + scryptSync(password, salt, 64).toString('hex'); }
@@ -64,6 +96,20 @@ async function api(req, res, path, body) {
     if (one('SELECT id FROM users LIMIT 1')) fail('Configuração já concluída.', 409);
     return transaction(()=>{const result=createUser(body,'proprietario');audit({id:result.id},'Conta inicial','Criou o proprietário');return result;});
   }
+  if(path==='/api/recovery/options' && req.method==='GET') return deliveryStatus();
+  if(path==='/api/recovery/request' && req.method==='POST') {
+    const channel=body.channel;if(!['email','sms'].includes(channel)) fail('Escolha email ou SMS.');
+    if(!deliveryStatus()[channel]) fail('O envio por este canal ainda não está configurado. Contacte o proprietário para repor o acesso.',503);
+    const identifier=text(body.identifier,'Email ou BI',254);
+    const result=await recovery.request(identifier,channel,req.socket.remoteAddress,sendRecovery);
+    return result;
+  }
+  if(path==='/api/recovery/verify' && req.method==='POST') {
+    const id=recovery.verify(body.challenge,body.code,req.socket.remoteAddress);
+    if(!id) fail('Código inválido, expirado ou já utilizado. Solicite outro código.',400);
+    session(res,id,true);audit({id},'Recuperação de acesso','Entrou com código temporário; alteração da palavra-passe pendente.');
+    return {ok:true,reset_required:true};
+  }
   if (path === '/api/login' && req.method === 'POST') {
     const ip = req.socket.remoteAddress, now = Date.now();
     const attempt = attempts.get(ip) || { count: 0, until: now + 600000 };
@@ -71,29 +117,29 @@ async function api(req, res, path, body) {
     if (attempt.count >= 15) fail('Muitas tentativas. Aguarde 10 minutos.',429);
     attempt.count++; attempts.set(ip,attempt);
     const identifier=String(body.identifier || '').trim();
-    const user = one('SELECT * FROM users WHERE (email=? COLLATE NOCASE OR bi=? COLLATE NOCASE) AND active=1',identifier,identifier);
+    const user = one('SELECT * FROM users WHERE (email=? COLLATE NOCASE OR bi=? COLLATE NOCASE) AND active=1 AND deleted_at IS NULL',identifier,identifier);
     if (!user || !verify(String(body.password || ''), user.password)) fail('Email / BI ou palavra-passe incorretos.',401);
     attempts.delete(ip);
-    const token = randomBytes(32).toString('hex');
-    run('INSERT INTO sessions VALUES(?,?,?)',token,user.id,now + 43200000);
-    res.setHeader('Set-Cookie',`session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200${process.env.COOKIE_SECURE === '1' ? '; Secure' : ''}`);
+    session(res,user.id);
     return { ok: true };
   }
   const token = /(?:^|;\s*)session=([a-f0-9]+)/.exec(req.headers.cookie || '')?.[1];
-  const user = one('SELECT u.id,u.name,u.email,u.bi,u.birth_date,u.phone,u.role FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires>? AND u.active=1',token || '',Date.now());
+  const user = one('SELECT u.id,u.name,u.email,u.bi,u.birth_date,u.phone,u.role,s.recovery FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires>? AND u.active=1 AND u.deleted_at IS NULL',token || '',Date.now());
   if (!user) fail('Inicie sessão para continuar.',401);
   if (path === '/api/logout' && req.method === 'POST') { run('DELETE FROM sessions WHERE token=?',token); res.setHeader('Set-Cookie','session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'); return { ok:true }; }
+  if(user.recovery && !['/api/state','/api/password','/api/logout'].includes(path)) fail('Defina uma nova palavra-passe para aceder à loja.',403);
+  if(user.recovery && path==='/api/state' && req.method==='GET') return {user,recovery_required:true};
   if (path === '/api/state' && req.method === 'GET') {
     const manager = user.role !== 'vendedor';
     const products = all('SELECT * FROM products WHERE active=1 ORDER BY name');
     if (!manager) for (const p of products) delete p.pack_cost;
-    return { user, products, sales: all(`SELECT s.*,u.name AS seller FROM sales s JOIN users u ON u.id=s.user_id ${manager ? '' : 'WHERE s.user_id=?'} ORDER BY s.id DESC LIMIT 100`, ...(manager ? [] : [user.id])),
+    return { user, products, current_shift:one("SELECT s.*,(SELECT COALESCE(SUM(total),0) FROM sales WHERE shift_id=s.id AND method='dinheiro') AS cash_sales FROM shifts s WHERE user_id=? AND closed IS NULL",user.id), sales: all(`SELECT s.*,u.name AS seller FROM sales s JOIN users u ON u.id=s.user_id ${manager ? '' : 'WHERE s.user_id=?'} ORDER BY s.id DESC LIMIT 100`, ...(manager ? [] : [user.id])),
       shifts: all(`SELECT s.*,u.name AS seller,(SELECT COALESCE(SUM(total),0) FROM sales WHERE shift_id=s.id AND method='dinheiro') AS cash_sales FROM shifts s JOIN users u ON u.id=s.user_id ${manager ? '' : 'WHERE s.user_id=?'} ORDER BY s.id DESC LIMIT 50`,...(manager ? [] : [user.id])),
-      users: manager ? all('SELECT id,name,email,bi,birth_date,phone,role,active FROM users ORDER BY id') : [],
+      users: manager ? all('SELECT id,name,email,bi,birth_date,phone,role,active FROM users WHERE deleted_at IS NULL ORDER BY id') : [],
       purchases: manager ? all('SELECT m.*,p.name AS product,p.unit,u.name AS actor FROM movements m JOIN products p ON p.id=m.product_id JOIN users u ON u.id=m.user_id ORDER BY m.id DESC LIMIT 100') : [],
       audit: manager ? all('SELECT a.*,u.name AS actor FROM audit a JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 100') : [],
-      chart: all(`SELECT date(created) AS day, SUM(total) AS total,COUNT(*) AS count FROM sales WHERE created>=date('now','-13 days') ${manager ? '' : 'AND user_id=?'} GROUP BY date(created) ORDER BY day`,...(manager ? [] : [user.id])),
-      metrics: one(`SELECT COALESCE(SUM(CASE WHEN date(created)=date('now') THEN total ELSE 0 END),0) AS today,COUNT(CASE WHEN date(created)=date('now') THEN 1 END) AS count,COALESCE(SUM(CASE WHEN created>=date('now','-6 days') THEN total ELSE 0 END),0) AS current_week,COALESCE(SUM(CASE WHEN created>=date('now','-13 days') AND created<date('now','-6 days') THEN total ELSE 0 END),0) AS previous_week FROM sales ${manager ? '' : 'WHERE user_id=?'}`,...(manager ? [] : [user.id])) };
+      chart: all(`SELECT date(created,'+1 hour') AS day, SUM(total) AS total,COUNT(*) AS count FROM sales WHERE datetime(created,'+1 hour')>=date('now','+1 hour','-13 days') ${manager ? '' : 'AND user_id=?'} GROUP BY date(created,'+1 hour') ORDER BY day`,...(manager ? [] : [user.id])),
+      metrics: one(`SELECT COALESCE(SUM(CASE WHEN date(created,'+1 hour')=date('now','+1 hour') THEN total ELSE 0 END),0) AS today,COUNT(CASE WHEN date(created,'+1 hour')=date('now','+1 hour') THEN 1 END) AS count,COALESCE(SUM(CASE WHEN datetime(created,'+1 hour')>=date('now','+1 hour','-6 days') THEN total ELSE 0 END),0) AS current_week,COALESCE(SUM(CASE WHEN datetime(created,'+1 hour')>=date('now','+1 hour','-13 days') AND datetime(created,'+1 hour')<date('now','+1 hour','-6 days') THEN total ELSE 0 END),0) AS previous_week FROM sales ${manager ? '' : 'WHERE user_id=?'}`,...(manager ? [] : [user.id])) };
   }
   if (path === '/api/products' && req.method === 'POST') {
     manage(user);
@@ -140,7 +186,7 @@ async function api(req, res, path, body) {
   });
   if (/^\/api\/sales\/\d+$/.test(path) && req.method==='GET') { const r=receipt(Number(path.split('/').pop())); if(!r.id) fail('Recibo inexistente.',404); if(user.role==='vendedor' && r.user_id!==user.id) fail('Sem permissão.',403); return r; }
   if(path==='/api/users' && req.method==='POST') {
-    manage(user); const role=text(body.role,'Perfil'); if(!['proprietario','gerente','vendedor'].includes(role)) fail('Perfil inválido.');
+    manage(user); const role=text(body.role,'Perfil'); if(!['gerente','vendedor'].includes(role)) fail('Só pode cadastrar gerentes ou vendedores. Para mudar o proprietário, use a transferência de propriedade.');
     if(user.role==='gerente' && role!=='vendedor') fail('Apenas o proprietário pode gerir gerentes e proprietários.',403);
     return transaction(()=>{const result=createUser(body,role);audit(user,'Utilizador',`Criou a conta #${result.id} (${role})`);return result;});
   }
@@ -151,34 +197,56 @@ async function api(req, res, path, body) {
   });
   if(path==='/api/password' && req.method==='POST') return transaction(()=>{
     const current=one('SELECT password FROM users WHERE id=?',user.id);
-    if(!verify(String(body.current_password || ''),current.password)) fail('Palavra-passe atual incorreta.');
-    const password=text(body.password,'Nova palavra-passe',200);if(password.length<10) fail('Use pelo menos 10 caracteres.');
+    if(!user.recovery && !verify(String(body.current_password || ''),current.password)) fail('Palavra-passe atual incorreta.');
+    const password=validPassword(body.password);
     if(verify(password,current.password)) fail('Escolha uma palavra-passe diferente da atual.');
     run('UPDATE users SET password=? WHERE id=?',hash(password),user.id);
     run('DELETE FROM sessions WHERE user_id=? AND token<>?',user.id,token);
+    run('UPDATE sessions SET recovery=0,expires=? WHERE token=?',Date.now()+43200000,token);
+    run('UPDATE recoveries SET used=1 WHERE user_id=?',user.id);
+    res.setHeader('Set-Cookie',`session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200${process.env.COOKIE_SECURE==='1'?'; Secure':''}`);
     audit(user,'Segurança','Alterou a sua palavra-passe');return {ok:true};
   });
   if(path==='/api/users/profile' && req.method==='POST') return transaction(()=>{
-    manage(user);rejectIdentity(body);const target=one('SELECT * FROM users WHERE id=?',body.id);
+    manage(user);rejectIdentity(body);const target=one('SELECT * FROM users WHERE id=? AND deleted_at IS NULL',body.id);
     if(!target) fail('Utilizador inexistente.',404);
     if(user.role==='gerente' && target.role!=='vendedor' && target.id!==user.id) fail('Apenas o proprietário pode gerir este perfil.',403);
     const p=contacts(body);run('UPDATE users SET email=?,phone=? WHERE id=?',p.email,p.phone,target.id);
     audit(user,'Perfil',`Atualizou contactos da conta #${target.id}`);return {ok:true};
   });
   if(path==='/api/users/reset-password' && req.method==='POST') return transaction(()=>{
-    manage(user);rejectIdentity(body);const target=one('SELECT * FROM users WHERE id=?',body.id);
+    manage(user);rejectIdentity(body);const target=one('SELECT * FROM users WHERE id=? AND deleted_at IS NULL',body.id);
     if(!target) fail('Utilizador inexistente.',404);
     if(target.id===user.id || (user.role==='gerente' && target.role!=='vendedor')) fail('Sem permissão para repor esta palavra-passe.',403);
-    const password=randomBytes(18).toString('base64url');run('UPDATE users SET password=? WHERE id=?',hash(password),target.id);
-    run('DELETE FROM sessions WHERE user_id=?',target.id);audit(user,'Segurança',`Repôs a palavra-passe da conta #${target.id}`);
+    const password=generatePassword();run('UPDATE users SET password=? WHERE id=?',hash(password),target.id);
+    run('DELETE FROM sessions WHERE user_id=?',target.id);run('UPDATE recoveries SET used=1 WHERE user_id=?',target.id);audit(user,'Segurança',`Repôs a palavra-passe da conta #${target.id}`);
     return {email:target.email,password};
   });
   if(path==='/api/users/access' && req.method==='POST') return transaction(()=>{
-    manage(user);rejectIdentity(body);const target=one('SELECT * FROM users WHERE id=?',body.id); if(!target) fail('Utilizador inexistente.'); if(target.id===user.id) fail('Não pode alterar o seu próprio acesso.');
-    const role=body.role; if(!['proprietario','gerente','vendedor'].includes(role) || typeof body.active!=='boolean') fail('Acesso inválido.');
+    manage(user);rejectIdentity(body);const target=one('SELECT * FROM users WHERE id=? AND deleted_at IS NULL',body.id); if(!target) fail('Utilizador inexistente.'); if(target.id===user.id) fail('Não pode alterar o seu próprio acesso.');
+    const role=body.role; if(!['gerente','vendedor'].includes(role) || typeof body.active!=='boolean') fail('Acesso inválido.');
     if(user.role==='gerente' && (target.role!=='vendedor' || role!=='vendedor')) fail('Apenas o proprietário pode gerir este perfil.',403);
-    if(target.role==='proprietario' && (role!=='proprietario' || !body.active) && one("SELECT COUNT(*) AS n FROM users WHERE role='proprietario' AND active=1").n<=1) fail('Mantenha um proprietário ativo.');
+    if(target.role==='proprietario') fail('O proprietário só pode ser substituído por transferência de propriedade.',403);
+    if(role==='gerente' && one("SELECT id FROM users WHERE role='gerente' AND deleted_at IS NULL AND id<>?",target.id)) fail('Já existe um gerente. Remova ou altere o gerente atual primeiro.',409);
     run('UPDATE users SET role=?,active=? WHERE id=?',role,Number(body.active),target.id);run('DELETE FROM sessions WHERE user_id=?',target.id);audit(user,'Permissões',`${target.name}: ${role}, ${body.active ? 'ativo' : 'inativo'}`);return {ok:true};
+  });
+  if(path==='/api/users/remove' && req.method==='POST') return transaction(()=>{
+    manage(user);const target=one('SELECT * FROM users WHERE id=? AND deleted_at IS NULL',body.id);
+    if(!target) fail('Utilizador inexistente.',404);
+    if(target.id===user.id || target.role==='proprietario' || (user.role==='gerente' && target.role!=='vendedor')) fail('Não pode remover este utilizador.',403);
+    if(one('SELECT id FROM shifts WHERE user_id=? AND closed IS NULL',target.id)) fail('Este utilizador precisa de fechar o caixa antes de ser removido.');
+    run("UPDATE users SET active=0,deleted_at=CURRENT_TIMESTAMP,role='vendedor' WHERE id=?",target.id);
+    run('DELETE FROM sessions WHERE user_id=?',target.id);run('UPDATE recoveries SET used=1 WHERE user_id=?',target.id);
+    audit(user,'Remoção de utilizador',`Removeu a conta #${target.id}; histórico preservado.`);return {ok:true};
+  });
+  if(path==='/api/users/transfer-owner' && req.method==='POST') return transaction(()=>{
+    if(user.role!=='proprietario') fail('Apenas o proprietário pode transferir a propriedade.',403);
+    if(!verify(String(body.password||''),one('SELECT password FROM users WHERE id=?',user.id).password)) fail('Palavra-passe atual incorreta.');
+    const target=one('SELECT * FROM users WHERE id=? AND active=1 AND deleted_at IS NULL',body.id);
+    if(!target || target.id===user.id) fail('Escolha outra pessoa ativa para assumir a propriedade.');
+    run("UPDATE users SET role='vendedor' WHERE id=?",user.id);run("UPDATE users SET role='proprietario' WHERE id=?",target.id);
+    run('DELETE FROM sessions WHERE user_id IN (?,?)',user.id,target.id);
+    audit(user,'Transferência de propriedade',`Transferiu a propriedade para a conta #${target.id}; proprietário anterior passou a vendedor.`);return {ok:true};
   });
   fail('Recurso não encontrado.',404);
 }
@@ -188,13 +256,14 @@ const server=http.createServer(async(req,res)=>{
   // CSP instead of X-Frame-Options DENY, which blocks even trusted preview hosts.
   const frameAncestors=process.env.FRAME_ANCESTORS || "'self' https://chatgpt.com https://*.chatgpt.com";
   res.setHeader('Content-Security-Policy',`default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors ${frameAncestors}`);
+  res.setHeader('Cache-Control','no-store');
   try {
     const url=new URL(req.url,'http://localhost');
     if(url.pathname.startsWith('/api/')) {
       if(!['GET','POST'].includes(req.method)) fail('Método não permitido.',405);
       if(req.method==='POST' && req.headers.origin && req.headers.origin!==`http://${req.headers.host}` && req.headers.origin!==`https://${req.headers.host}`) fail('Origem não autorizada.',403);
       let raw='';for await(const chunk of req){raw+=chunk;if(raw.length>65536) fail('Pedido demasiado grande.',413);}
-      let body={};try{body=raw ? JSON.parse(raw) : {};}catch{fail('JSON inválido.');}
+      let body={};try{body=raw ? JSON.parse(raw) : {};}catch{fail('JSON inválido.');}if(!body || typeof body!=='object' || Array.isArray(body)) fail('Pedido inválido.');
       const result=await api(req,res,url.pathname,body);res.setHeader('Content-Type','application/json; charset=utf-8');res.setHeader('Cache-Control','no-store');res.end(JSON.stringify(result));
     } else {
       const files={'/':'index.html','/app.js':'app.js','/style.css':'style.css'};const file=files[url.pathname];if(!file) fail('Página não encontrada.',404);
@@ -202,4 +271,4 @@ const server=http.createServer(async(req,res)=>{
     }
   } catch(e){res.statusCode=e.status || (String(e.message).includes('UNIQUE') ? 409 : 500);res.setHeader('Content-Type','application/json');res.end(JSON.stringify({error:e.status ? e.message : res.statusCode===409 ? 'Já existe um registo com esse email, BI ou código de barras.' : 'Erro interno. Tente novamente.'}));if(res.statusCode===500) console.error(e);}
 });
-server.listen(Number(process.env.PORT || 3000),process.env.HOST || '0.0.0.0',()=>console.log(`Loja Clara pronta na porta ${process.env.PORT || 3000}`));
+server.listen(Number(process.env.PORT || 3000),process.env.HOST || '0.0.0.0',()=>console.log(`TT LEBILA pronta na porta ${process.env.PORT || 3000}`));
