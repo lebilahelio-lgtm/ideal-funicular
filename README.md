@@ -21,9 +21,11 @@ Os testes usam bases temporárias isoladas e cobrem autenticação, stock, venda
 
 - Categorias livres; produtos vendidos em unidades, kg, g, litros e mL.
 - Entradas por caixas, pacotes ou outra embalagem, com conteúdo e custo de aquisição. Stock total convertido para a unidade de venda, com até três casas decimais.
+- Venda de vários produtos no mesmo carrinho e recibo, com subtotal por item e botão para continuar a adicionar produtos.
 - Venda com pesquisa, leitor de código de barras USB/Bluetooth em modo teclado e carrinho. Código + Enter adiciona o produto; quantidades podem ser ajustadas. Leitura por câmara não implementada.
 - Vendas e atualização de stock numa transação SQLite; preços, disponibilidade e permissões validados no servidor. Valores monetários em cêntimos de Kz.
-- Caixa individual: fundo inicial, pagamentos em dinheiro/TPA/transferência e conferência no fecho. O dinheiro esperado exclui trocos e pagamentos eletrónicos.
+- Validação partilhada entre interface e servidor: valor recebido insuficiente indica quanto falta; pagamento exato indica ausência de troco; dinheiro a mais calcula o troco; TPA/transferência exigem valor exato. Desconto acima do subtotal é rejeitado com o excesso indicado. Valores inválidos não criam venda nem descontam stock.
+- Caixa individual: fundo inicial, pagamentos em dinheiro/TPA/transferência e conferência no fecho. O dinheiro esperado exclui trocos e pagamentos eletrónicos. No fecho, a diferença aparece durante a contagem: uma falta de dinheiro é avisada, mas pode ser registada para preservar o valor efetivamente contado. Não é necessário inventar um valor igual ao esperado para fechar o caixa.
 - Recibos imprimíveis e reimprimíveis com vendedor, cliente, produtos, quantidades, preços, subtotal, desconto, total, valor entregue e troco.
 - Indicadores de hoje, gráfico diário de 14 dias e comparação de receita de dois períodos de 7 dias. Períodos e datas apresentados segundo o calendário de Angola (UTC+1). Sem vendas anteriores, não se inventa uma tendência. Receita não é lucro.
 - Alertas de stock mínimo, exportação CSV das últimas 100 vendas visíveis e histórico das últimas 100 atividades.
@@ -78,4 +80,4 @@ Os recibos são **comprovativos internos sem validade fiscal**, não faturas cer
 
 ## Teste de navegador opcional
 
-Com Python Playwright instalado e Chromium disponível em `/usr/bin/chromium`, execute `python3 tests/browser.py`. O teste usa uma base separada e cobre cadastro de vendedor e gerente, resposta vazia, filtros, senhas, separação de milhares, venda por peso, recibo e layout móvel. Não altera a base real.
+Com Python Playwright instalado e Chromium disponível em `/usr/bin/chromium`, execute `python3 tests/browser.py`. O teste usa uma base separada e cobre cadastro de vendedor e gerente, resposta vazia, filtros, senhas, separação de milhares, venda por peso com vários produtos no mesmo recibo, insuficiência até um cêntimo, desconto inválido, excesso eletrónico, falta no caixa e layout móvel. Não altera a base real.

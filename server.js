@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { settlement, compareAmounts, formatMoney } from './public/calculations.js';
 import { Recovery, deliveryStatus, sendRecovery } from './recovery.js';
 import { DatabaseSync } from 'node:sqlite';
 import { randomBytes, randomInt, scryptSync, timingSafeEqual } from 'node:crypto';
@@ -170,16 +171,16 @@ async function api(req, res, path, body) {
   if (path === '/api/shifts/close' && req.method === 'POST') return transaction(()=>{
     const shift=one('SELECT * FROM shifts WHERE user_id=? AND closed IS NULL',user.id); if (!shift) fail('Não tem caixa aberto.');
     const expected=shift.opening+one("SELECT COALESCE(SUM(total),0) AS total FROM sales WHERE shift_id=? AND method='dinheiro'",shift.id).total;
-    const closing=money(body.closing,'Valor contado'); run('UPDATE shifts SET closed=CURRENT_TIMESTAMP,closing=?,expected=? WHERE id=?',closing,expected,shift.id); audit(user,'Fecho de caixa',`Caixa #${shift.id}; diferença ${(closing-expected)/100} Kz`); return {expected,closing};
+    const closing=money(body.closing,'Valor contado'),comparison=compareAmounts(expected,closing);if(!comparison.ok)fail(comparison.error); run('UPDATE shifts SET closed=CURRENT_TIMESTAMP,closing=?,expected=? WHERE id=?',closing,expected,shift.id); audit(user,'Fecho de caixa',`Caixa #${shift.id}; diferença ${(closing-expected)/100} Kz`); return {expected,closing,difference:comparison.difference,warning:comparison.shortfall?`Valor em caixa insuficiente. Faltam ${formatMoney(comparison.shortfall)} face ao esperado.`:comparison.excess?`Existem ${formatMoney(comparison.excess)} a mais no caixa.`:null};
   });
   if (path === '/api/sales' && req.method === 'POST') return transaction(()=>{
     const shift=one('SELECT id FROM shifts WHERE user_id=? AND closed IS NULL',user.id); if (!shift) fail('Abra o caixa antes de vender.');
     if (!Array.isArray(body.items) || !body.items.length || body.items.length>100) fail('Adicione produtos à venda.');
     const seen=new Set();
-    const items=body.items.map(i=>{ if (seen.has(i.product_id)) fail('Produto repetido.'); seen.add(i.product_id); const p=one('SELECT * FROM products WHERE id=? AND active=1',i.product_id); if (!p) fail('Produto indisponível.'); const quantity=number(i.quantity,'Quantidade',0.001,1e7); if (Math.abs(quantity*1000-Math.round(quantity*1000))>1e-6 || (p.unit==='un' && !Number.isInteger(quantity))) fail('Quantidade inválida para a unidade.'); if (quantity>p.stock) fail(`Stock insuficiente: ${p.name}.`); return {...p,quantity,total:Math.round(p.price*quantity)}; });
-    const subtotal=items.reduce((s,i)=>s+i.total,0),discount=money(body.discount,'Desconto'); if(discount>subtotal) fail('Desconto superior ao subtotal.');
-    const total=subtotal-discount,paid=money(body.paid,'Valor recebido'); if(paid<total) fail('Valor recebido insuficiente.');
-    if(!['dinheiro','transferencia','tpa'].includes(body.method)) fail('Pagamento inválido.'); if(body.method!=='dinheiro' && paid!==total) fail('Em pagamentos eletrónicos, o valor deve ser igual ao total.');
+    const items=body.items.map(i=>{ if (seen.has(i.product_id)) fail('Produto repetido.'); seen.add(i.product_id); const p=one('SELECT * FROM products WHERE id=? AND active=1',i.product_id); if (!p) fail('Produto indisponível.'); const quantity=number(i.quantity,'Quantidade',0.001,1e7); if (Math.abs(quantity*1000-Math.round(quantity*1000))>1e-6 || (p.unit==='un' && !Number.isInteger(quantity))) fail('Quantidade inválida para a unidade.'); if (quantity>p.stock) fail(`Stock insuficiente: ${p.name}. Disponível: ${p.stock} ${p.unit}; pedido: ${quantity} ${p.unit}. Faltam ${Math.round((quantity-p.stock)*1000)/1000} ${p.unit}.`); return {...p,quantity,total:Math.round(p.price*quantity)}; });
+    const subtotal=items.reduce((s,i)=>s+i.total,0),discount=money(body.discount,'Desconto'),paid=money(body.paid,'Valor recebido');
+    const result=settlement(subtotal,discount,paid,body.method);if(!result.ok)fail(result.error);
+    const total=result.total;
     const id=Number(run('INSERT INTO sales(user_id,shift_id,customer,subtotal,discount,total,paid,change_due,method) VALUES(?,?,?,?,?,?,?,?,?)',user.id,shift.id,String(body.customer || 'Consumidor final').slice(0,150),subtotal,discount,total,paid,paid-total,body.method).lastInsertRowid);
     for(const i of items){run('INSERT INTO items(sale_id,product_id,name,unit,quantity,price,total) VALUES(?,?,?,?,?,?,?)',id,i.id,i.name,i.unit,i.quantity,i.price,i.total);run('UPDATE products SET stock=ROUND(stock-?,3) WHERE id=?',i.quantity,i.id);}
     audit(user,'Venda',`Recibo #${id}; total ${total/100} Kz`);return receipt(id);
@@ -266,7 +267,7 @@ const server=http.createServer(async(req,res)=>{
       let body={};try{body=raw ? JSON.parse(raw) : {};}catch{fail('JSON inválido.');}if(!body || typeof body!=='object' || Array.isArray(body)) fail('Pedido inválido.');
       const result=await api(req,res,url.pathname,body);res.setHeader('Content-Type','application/json; charset=utf-8');res.setHeader('Cache-Control','no-store');res.end(JSON.stringify(result));
     } else {
-      const files={'/':'index.html','/app.js':'app.js','/style.css':'style.css'};const file=files[url.pathname];if(!file) fail('Página não encontrada.',404);
+      const files={'/':'index.html','/app.js':'app.js','/calculations.js':'calculations.js','/style.css':'style.css'};const file=files[url.pathname];if(!file) fail('Página não encontrada.',404);
       res.setHeader('Content-Type',({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'})[extname(file)]);res.end(readFileSync(new URL(`./public/${file}`,import.meta.url)));
     }
   } catch(e){res.statusCode=e.status || (String(e.message).includes('UNIQUE') ? 409 : 500);res.setHeader('Content-Type','application/json');res.end(JSON.stringify({error:e.status ? e.message : res.statusCode===409 ? 'Já existe um registo com esse email, BI ou código de barras.' : 'Erro interno. Tente novamente.'}));if(res.statusCode===500) console.error(e);}

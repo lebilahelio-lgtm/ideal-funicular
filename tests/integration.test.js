@@ -139,4 +139,18 @@ test('complete shop workflow, atomic stock, permissions and cash reconciliation'
   assert.ok((await request('state')).body.current_shift);
   assert.equal((await request('state')).body.shifts.length,50);
   database.close();
+  // A single receipt includes multiple products; underpayment changes neither stock nor history.
+  const oil=await request('products',{name:'Óleo',category:'Alimentares',unit:'L',barcode:'54321',minimum:2,pack_type:'Caixa',pack_size:6,pack_cost:2000,price:500});
+  assert.equal(oil.status,200);assert.equal((await request('stock',{product_id:oil.body.id,packs:2,reason:'Compra de óleo'})).status,200);
+  const basket={items:[{product_id:product.id,quantity:1.25},{product_id:oil.body.id,quantity:2}],discount:250,paid:1800,method:'dinheiro'};
+  const prior=(await request('state')).body;
+  const insufficient=await request('sales',basket);assert.equal(insufficient.status,400);assert.match(insufficient.body.error,/insuficiente/);assert.match(insufficient.body.error,/200/);
+  const unchanged=(await request('state')).body;assert.equal(unchanged.sales.length,prior.sales.length);
+  assert.equal(unchanged.products.find(p=>p.id===product.id).stock,18.5);assert.equal(unchanged.products.find(p=>p.id===oil.body.id).stock,12);
+  const badDiscount=await request('sales',{...basket,discount:2251,paid:0});assert.equal(badDiscount.status,400);assert.match(badDiscount.body.error,/desconto excede/);
+  const multi=await request('sales',{...basket,paid:2000});assert.equal(multi.status,200);assert.equal(multi.body.items.length,2);assert.equal(multi.body.subtotal,225000);assert.equal(multi.body.total,200000);assert.equal(multi.body.change_due,0);
+  assert.equal((await request('sales/'+multi.body.id)).body.items.length,2);
+  const after=(await request('state')).body;assert.equal(after.products.find(p=>p.id===product.id).stock,17.25);assert.equal(after.products.find(p=>p.id===oil.body.id).stock,10);
+  const overpaid=await request('sales',{...basket,paid:2100});assert.equal(overpaid.status,200);assert.equal(overpaid.body.change_due,10000);
+  const cashShortage=await request('shifts/close',{closing:3900});assert.equal(cashShortage.status,200);assert.equal(cashShortage.body.difference,-10000);assert.match(cashShortage.body.warning,/insuficiente/);
 });
