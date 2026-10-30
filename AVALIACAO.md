@@ -2,6 +2,10 @@
 
 Revisão efetuada em 30/10/2026. Escopo: código, requisitos, testes de integração, teste de navegador e reprodução de situações adicionais numa base temporária. Nenhum dado real foi alterado. Esta revisão não é uma auditoria de segurança completa nem validação fiscal.
 
+## Atualização fiscal 1.2
+
+Acrescentado módulo de regras de IVA por produto, preços incluídos/acrescidos, desconto proporcional, snapshots e relatório por período. A configuração real continua pendente: regime da empresa desconhecido e consulta oficial da AGT bloqueada pela rede. Não foram presumidas taxas nem implementada certificação, declaração ou dedução de IVA das compras. Alterações de configuração fiscal ou do total esperado durante uma venda são agora rejeitadas com conflito; a proteção geral contra reenvio da mesma venda continua pendente.
+
 ## Atualização posterior à avaliação
 
 A versão 1.1 TT LEBILA corrigiu a consulta do caixa ativo, a reserva indevida de emails antigos e o calendário dos relatórios (itens 4, 5 e 6 abaixo). Acrescentou liderança única, remoção lógica, transferência de propriedade, senhas fortes, filtros e recuperação com código de 2 minutos. O envio de email/SMS depende de configuração externa e ainda não foi validado com um fornecedor real. Os itens 1, 2 e 3 e as restantes lacunas operacionais continuam pendentes. A avaliação original abaixo é preservada como histórico, não como lista integral de defeitos atuais.

@@ -66,6 +66,16 @@ Valores numéricos separam milhares com espaços enquanto escreve (`1 234 567,89
 
 Há pesquisa e categorias no catálogo e ponto de venda; os históricos de vendas, compras, caixas e atividades têm pesquisa, seleção de tipo e intervalo de datas. A equipa tem filtros de texto, perfil e estado. Estes filtros atuam sobre os registos carregados (limites documentados abaixo); não substituem paginação completa. Não há atualização em tempo real entre dispositivos.
 
+## IVA e regras fiscais
+
+Em **IVA e regras fiscais**, o proprietário define o enquadramento, NIF, morada, modo de preço, fundamento legal e regras por produto. O gerente pode classificar produtos e consultar o resumo, mas não alterar taxas nem o enquadramento. As regras distinguem tributação, isenção e não sujeição e têm datas de vigência. Produtos podem ser classificados individualmente no cadastro ou em grupo, sem alterar stock nem custos.
+
+**O regime da TT LEBILA ainda não foi confirmado.** O módulo inicia pendente, sem taxas legais predefinidas. Vendas neste estado continuam como comprovativos internos, com IVA e base fiscal **não apurados**, nunca como uma isenção presumida. Ativar exige enquadramento suportado, NIF, morada, fundamento e confirmação do proprietário; com o cálculo ativo, produtos sem regra válida impedem a venda. Consulte [FISCALIDADE.md](FISCALIDADE.md) antes de ativar.
+
+O cálculo distingue preços com IVA incluído e preços sem IVA, distribui o desconto pelos itens proporcionalmente e arredonda em cêntimos. O recibo mostra base, IVA e total por regra. Taxa, fundamento, empresa e modo de preço ficam guardados na venda: alterar regras depois não modifica recibos nem resumos históricos. Alterações durante um atendimento provocam conflito e exigem atualizar os preços/IVA antes de finalizar.
+
+O relatório filtra todas as vendas do período, sem o limite de 100 do histórico geral. Identifica quantos comprovativos ainda têm imposto por apurar. Não é declaração de IVA, não inclui IVA dedutível nas compras e não faz apuramento específico do regime simplificado. O software continua sem certificação fiscal.
+
 ## Dados e operação
 
 Variáveis opcionais: `PORT`, `HOST`, `DATA_DIR` (padrão `./data`) e `COOKIE_SECURE=1` ao servir exclusivamente por HTTPS. Sessões normais duram 12 horas; uma sessão de recuperação pendente dura até 10 minutos e só permite alterar a senha; palavras-passe são protegidas com scrypt e salt. Não exponha a aplicação diretamente à Internet sem HTTPS, cópias de segurança e revisão operacional de segurança.
@@ -76,7 +86,7 @@ Os dados persistem em `data/loja.sqlite`, com ficheiros WAL associados. Para uma
 
 ## Limites desta versão
 
-Os recibos são **comprovativos internos sem validade fiscal**, não faturas certificadas. A certificação fiscal, impostos e identificação fiscal do estabelecimento precisam de implementação conforme a legislação aplicável antes do uso fiscal. Esta versão também não inclui devoluções/anulações, vendas a crédito, movimentos manuais de saída do caixa, fornecedores estruturados, múltiplas lojas ou backups automáticos. Entradas de stock representam aquisições e não debitam automaticamente o caixa de vendas. O histórico da interface é limitado; os registos completos permanecem na base de dados. Não existe integração com balanças ou pagamento bancário: o método de pagamento é registado após confirmação pelo operador.
+Os recibos são **comprovativos internos sem validade fiscal**, não faturas certificadas. A certificação fiscal, o enquadramento e as taxas legais aplicáveis precisam de confirmação antes de ativar o módulo. NIF e morada podem ser configurados, mas isso não certifica o software. Esta versão também não inclui devoluções/anulações, vendas a crédito, movimentos manuais de saída do caixa, fornecedores estruturados, múltiplas lojas ou backups automáticos. Entradas de stock representam aquisições e não debitam automaticamente o caixa de vendas. O histórico da interface é limitado; os registos completos permanecem na base de dados. Não existe integração com balanças ou pagamento bancário: o método de pagamento é registado após confirmação pelo operador.
 
 ## Teste de navegador opcional
 

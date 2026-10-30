@@ -1,4 +1,6 @@
 import http from 'node:http';
+import {calculateTaxBasket} from './public/tax.js';
+import {migrateFiscal,fiscalState,saveFiscalSettings,saveTaxRule,taxReport} from './fiscal.js';
 import { settlement, compareAmounts, formatMoney } from './public/calculations.js';
 import { Recovery, deliveryStatus, sendRecovery } from './recovery.js';
 import { DatabaseSync } from 'node:sqlite';
@@ -22,6 +24,7 @@ CREATE TABLE IF NOT EXISTS movements(id INTEGER PRIMARY KEY,product_id INTEGER R
 const all = (sql, ...args) => db.prepare(sql).all(...args);
 const one = (sql, ...args) => db.prepare(sql).get(...args);
 const run = (sql, ...args) => db.prepare(sql).run(...args);
+migrateFiscal(db);
 // Additive migration preserves existing shop records.
 const columns=new Set(all('PRAGMA table_info(users)').map(c=>c.name));
 for(const column of ['email','bi','birth_date','phone']) if(!columns.has(column)) db.exec(`ALTER TABLE users ADD COLUMN ${column} TEXT`);
@@ -89,7 +92,10 @@ const money = (v, label) => Math.round(number(v, label) * 100);
 function audit(user, action, detail) { run('INSERT INTO audit(user_id,action,detail) VALUES(?,?,?)', user.id, action, detail); }
 function transaction(fn) { db.exec('BEGIN IMMEDIATE'); try { const result = fn(); db.exec('COMMIT'); return result; } catch (e) { db.exec('ROLLBACK'); throw e; } }
 function manage(user) { if (!['gerente','proprietario'].includes(user.role)) fail('Acesso reservado ao gerente e proprietário.', 403); }
-function receipt(id) { return { ...one('SELECT s.*,u.name AS seller FROM sales s JOIN users u ON u.id=s.user_id WHERE s.id=?', id), items: all('SELECT * FROM items WHERE sale_id=?', id) }; }
+function receipt(id) {
+ const sale=one('SELECT s.*,u.name AS seller FROM sales s JOIN users u ON u.id=s.user_id WHERE s.id=?',id);
+ return {...sale,fiscal_snapshot:sale?.fiscal_snapshot?JSON.parse(sale.fiscal_snapshot):null,items:all('SELECT * FROM items WHERE sale_id=?',id).map(i=>({...i,tax_snapshot:i.tax_snapshot?JSON.parse(i.tax_snapshot):null}))};
+}
 const attempts = new Map();
 async function api(req, res, path, body) {
   if (path === '/api/setup' && req.method === 'GET') return { required: !one('SELECT id FROM users LIMIT 1') };
@@ -134,7 +140,7 @@ async function api(req, res, path, body) {
     const manager = user.role !== 'vendedor';
     const products = all('SELECT * FROM products WHERE active=1 ORDER BY name');
     if (!manager) for (const p of products) delete p.pack_cost;
-    return { user, products, current_shift:one("SELECT s.*,(SELECT COALESCE(SUM(total),0) FROM sales WHERE shift_id=s.id AND method='dinheiro') AS cash_sales FROM shifts s WHERE user_id=? AND closed IS NULL",user.id), sales: all(`SELECT s.*,u.name AS seller FROM sales s JOIN users u ON u.id=s.user_id ${manager ? '' : 'WHERE s.user_id=?'} ORDER BY s.id DESC LIMIT 100`, ...(manager ? [] : [user.id])),
+    return { user, products, fiscal:fiscalState(db), current_shift:one("SELECT s.*,(SELECT COALESCE(SUM(total),0) FROM sales WHERE shift_id=s.id AND method='dinheiro') AS cash_sales FROM shifts s WHERE user_id=? AND closed IS NULL",user.id), sales: all(`SELECT s.*,u.name AS seller FROM sales s JOIN users u ON u.id=s.user_id ${manager ? '' : 'WHERE s.user_id=?'} ORDER BY s.id DESC LIMIT 100`, ...(manager ? [] : [user.id])),
       shifts: all(`SELECT s.*,u.name AS seller,(SELECT COALESCE(SUM(total),0) FROM sales WHERE shift_id=s.id AND method='dinheiro') AS cash_sales FROM shifts s JOIN users u ON u.id=s.user_id ${manager ? '' : 'WHERE s.user_id=?'} ORDER BY s.id DESC LIMIT 50`,...(manager ? [] : [user.id])),
       users: manager ? all('SELECT id,name,email,bi,birth_date,phone,role,active FROM users WHERE deleted_at IS NULL ORDER BY id') : [],
       purchases: manager ? all('SELECT m.*,p.name AS product,p.unit,u.name AS actor FROM movements m JOIN products p ON p.id=m.product_id JOIN users u ON u.id=m.user_id ORDER BY m.id DESC LIMIT 100') : [],
@@ -142,12 +148,29 @@ async function api(req, res, path, body) {
       chart: all(`SELECT date(created,'+1 hour') AS day, SUM(total) AS total,COUNT(*) AS count FROM sales WHERE datetime(created,'+1 hour')>=date('now','+1 hour','-13 days') ${manager ? '' : 'AND user_id=?'} GROUP BY date(created,'+1 hour') ORDER BY day`,...(manager ? [] : [user.id])),
       metrics: one(`SELECT COALESCE(SUM(CASE WHEN date(created,'+1 hour')=date('now','+1 hour') THEN total ELSE 0 END),0) AS today,COUNT(CASE WHEN date(created,'+1 hour')=date('now','+1 hour') THEN 1 END) AS count,COALESCE(SUM(CASE WHEN datetime(created,'+1 hour')>=date('now','+1 hour','-6 days') THEN total ELSE 0 END),0) AS current_week,COALESCE(SUM(CASE WHEN datetime(created,'+1 hour')>=date('now','+1 hour','-13 days') AND datetime(created,'+1 hour')<date('now','+1 hour','-6 days') THEN total ELSE 0 END),0) AS previous_week FROM sales ${manager ? '' : 'WHERE user_id=?'}`,...(manager ? [] : [user.id])) };
   }
+  if(path==='/api/fiscal/settings' && req.method==='POST') return transaction(()=>{
+    const result=saveFiscalSettings(db,body,user);audit(user,'Configuração fiscal',`Regime ${body.regime}; cálculo de IVA ${body.enabled?'ativo':'pendente'}; preços ${body.price_mode==='included'?'com IVA incluído':'sem IVA'}.`);return result;
+  });
+  if(path==='/api/fiscal/rules' && req.method==='POST') return transaction(()=>{
+    const previous=body.id?one('SELECT * FROM tax_rules WHERE id=?',body.id):null;
+    const result=saveTaxRule(db,body,user);audit(user,'Regra de IVA',`${body.id?'Alterou':'Criou'} regra #${result.id}: ${body.name}, ${body.rate}%, ${body.kind}; anterior ${previous?previous.rate_bps/100+'%':'nenhuma'}.`);return result;
+  });
+  if(path==='/api/fiscal/report' && req.method==='POST'){manage(user);return taxReport(db,body);}
+  if(path==='/api/products/tax' && req.method==='POST') return transaction(()=>{
+    manage(user);const rule=one('SELECT * FROM tax_rules WHERE id=? AND active=1',body.tax_rule_id);
+    if(!rule)fail('Escolha uma regra fiscal ativa.');
+    if(!Array.isArray(body.ids)||!body.ids.length||body.ids.length>500||body.ids.some(id=>!Number.isSafeInteger(id)))fail('Escolha de 1 a 500 produtos.');
+    for(const id of new Set(body.ids)){if(!one('SELECT id FROM products WHERE id=?',id))fail('Produto inexistente.');run('UPDATE products SET tax_rule_id=? WHERE id=?',rule.id,id);}
+    audit(user,'Classificação fiscal',`Aplicou a regra #${rule.id} a ${new Set(body.ids).size} produtos.`);return {ok:true};
+  });
   if (path === '/api/products' && req.method === 'POST') {
     manage(user);
     const name=text(body.name,'Produto'), category=text(body.category,'Categoria'), unit=text(body.unit,'Unidade'), pack=text(body.pack_type,'Embalagem');
     if (!['un','kg','L','g','mL'].includes(unit)) fail('Unidade não suportada.');
     const size=number(body.pack_size,'Conteúdo da embalagem',0.001), cost=money(body.pack_cost,'Custo'), price=money(body.price,'Preço'), minimum=number(body.minimum,'Stock mínimo'), barcode=body.barcode ? text(body.barcode,'Código de barras',80) : null;
     return transaction(()=>{
+      let taxRule=body.tax_rule_id===undefined?(body.id?one('SELECT tax_rule_id FROM products WHERE id=?',body.id)?.tax_rule_id:null):body.tax_rule_id;
+      if(taxRule!==null&&taxRule!==''&&taxRule!==undefined){taxRule=Number(taxRule);if(!Number.isSafeInteger(taxRule)||!one('SELECT id FROM tax_rules WHERE id=? AND active=1',taxRule))fail('Regra fiscal inválida ou inativa.');}else taxRule=null;
       let id;
       if (body.id) {
         const existing=one('SELECT * FROM products WHERE id=?',body.id);
@@ -155,6 +178,7 @@ async function api(req, res, path, body) {
         if (existing.unit!==unit && (existing.stock>0 || one('SELECT id FROM items WHERE product_id=? LIMIT 1',body.id))) fail('Não pode alterar a unidade de um produto com stock ou vendas. Crie outro produto.');
         run('UPDATE products SET name=?,category=?,unit=?,barcode=?,minimum=?,pack_type=?,pack_size=?,pack_cost=?,price=? WHERE id=?',name,category,unit,barcode,minimum,pack,size,cost,price,body.id); id=body.id;
       } else { id=Number(run('INSERT INTO products(name,category,unit,barcode,minimum,pack_type,pack_size,pack_cost,price) VALUES(?,?,?,?,?,?,?,?,?)',name,category,unit,barcode,minimum,pack,size,cost,price).lastInsertRowid); }
+      run('UPDATE products SET tax_rule_id=? WHERE id=?',taxRule,id);
       audit(user,'Produto',`${body.id ? 'Atualizou' : 'Criou'} ${name}`); return {id};
     });
   }
@@ -178,11 +202,16 @@ async function api(req, res, path, body) {
     if (!Array.isArray(body.items) || !body.items.length || body.items.length>100) fail('Adicione produtos à venda.');
     const seen=new Set();
     const items=body.items.map(i=>{ if (seen.has(i.product_id)) fail('Produto repetido.'); seen.add(i.product_id); const p=one('SELECT * FROM products WHERE id=? AND active=1',i.product_id); if (!p) fail('Produto indisponível.'); const quantity=number(i.quantity,'Quantidade',0.001,1e7); if (Math.abs(quantity*1000-Math.round(quantity*1000))>1e-6 || (p.unit==='un' && !Number.isInteger(quantity))) fail('Quantidade inválida para a unidade.'); if (quantity>p.stock) fail(`Stock insuficiente: ${p.name}. Disponível: ${p.stock} ${p.unit}; pedido: ${quantity} ${p.unit}. Faltam ${Math.round((quantity-p.stock)*1000)/1000} ${p.unit}.`); return {...p,quantity,total:Math.round(p.price*quantity)}; });
-    const subtotal=items.reduce((s,i)=>s+i.total,0),discount=money(body.discount,'Desconto'),paid=money(body.paid,'Valor recebido');
-    const result=settlement(subtotal,discount,paid,body.method);if(!result.ok)fail(result.error);
-    const total=result.total;
-    const id=Number(run('INSERT INTO sales(user_id,shift_id,customer,subtotal,discount,total,paid,change_due,method) VALUES(?,?,?,?,?,?,?,?,?)',user.id,shift.id,String(body.customer || 'Consumidor final').slice(0,150),subtotal,discount,total,paid,paid-total,body.method).lastInsertRowid);
-    for(const i of items){run('INSERT INTO items(sale_id,product_id,name,unit,quantity,price,total) VALUES(?,?,?,?,?,?,?)',id,i.id,i.name,i.unit,i.quantity,i.price,i.total);run('UPDATE products SET stock=ROUND(stock-?,3) WHERE id=?',i.quantity,i.id);}
+    const discount=money(body.discount,'Desconto'),paid=money(body.paid,'Valor recebido'),fiscal=fiscalState(db);
+    if(body.expected_fiscal_revision!==undefined&&body.expected_fiscal_revision!==fiscal.revision)fail('As regras fiscais mudaram. Atualize os preços/IVA no ponto de venda e confirme os valores antes de finalizar.',409);
+    if(fiscal.settings.enabled&&body.expected_fiscal_revision!==fiscal.revision)fail('Atualize os preços/IVA para confirmar o enquadramento fiscal antes de vender.',409);
+    const basket=calculateTaxBasket(items,discount,fiscal.settings,fiscal.rules);if(!basket.ok)fail(basket.error);
+    if(body.expected_total!==undefined&&body.expected_total!==basket.total)fail('Os preços ou impostos mudaram. Atualize os preços/IVA e confirme o novo total antes de finalizar.',409);
+    const result=settlement(basket.total,0,paid,body.method);if(!result.ok)fail(result.error);
+    const total=result.total,subtotal=basket.subtotal;
+    const snapshot={company_name:'TT LEBILA',company_nif:fiscal.settings.company_nif,company_address:fiscal.settings.company_address,regime:fiscal.settings.regime,price_mode:fiscal.settings.price_mode,legal_basis:fiscal.settings.legal_basis,confirmed_by:fiscal.settings.confirmed_by,confirmed_at:fiscal.settings.confirmed_at,revision:fiscal.revision,groups:basket.groups};
+    const id=Number(run('INSERT INTO sales(user_id,shift_id,customer,subtotal,discount,total,paid,change_due,method,tax_base,tax_total,fiscal_state,fiscal_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',user.id,shift.id,String(body.customer || 'Consumidor final').slice(0,150),subtotal,discount,total,paid,paid-total,body.method,basket.tax_base,basket.tax_total,basket.fiscal_state,JSON.stringify(snapshot)).lastInsertRowid);
+    for(const i of basket.lines){run('INSERT INTO items(sale_id,product_id,name,unit,quantity,price,total,discount_amount,tax_base,tax_amount,taxed_total,tax_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',id,i.id,i.name,i.unit,i.quantity,i.price,i.total,i.discount_amount,i.tax_base,i.tax_amount,i.taxed_total,i.tax_snapshot?JSON.stringify(i.tax_snapshot):null);run('UPDATE products SET stock=ROUND(stock-?,3) WHERE id=?',i.quantity,i.id);}
     audit(user,'Venda',`Recibo #${id}; total ${total/100} Kz`);return receipt(id);
   });
   if (/^\/api\/sales\/\d+$/.test(path) && req.method==='GET') { const r=receipt(Number(path.split('/').pop())); if(!r.id) fail('Recibo inexistente.',404); if(user.role==='vendedor' && r.user_id!==user.id) fail('Sem permissão.',403); return r; }
@@ -267,7 +296,7 @@ const server=http.createServer(async(req,res)=>{
       let body={};try{body=raw ? JSON.parse(raw) : {};}catch{fail('JSON inválido.');}if(!body || typeof body!=='object' || Array.isArray(body)) fail('Pedido inválido.');
       const result=await api(req,res,url.pathname,body);res.setHeader('Content-Type','application/json; charset=utf-8');res.setHeader('Cache-Control','no-store');res.end(JSON.stringify(result));
     } else {
-      const files={'/':'index.html','/app.js':'app.js','/calculations.js':'calculations.js','/style.css':'style.css'};const file=files[url.pathname];if(!file) fail('Página não encontrada.',404);
+      const files={'/':'index.html','/app.js':'app.js','/calculations.js':'calculations.js','/tax.js':'tax.js','/style.css':'style.css'};const file=files[url.pathname];if(!file) fail('Página não encontrada.',404);
       res.setHeader('Content-Type',({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'})[extname(file)]);res.end(readFileSync(new URL(`./public/${file}`,import.meta.url)));
     }
   } catch(e){res.statusCode=e.status || (String(e.message).includes('UNIQUE') ? 409 : 500);res.setHeader('Content-Type','application/json');res.end(JSON.stringify({error:e.status ? e.message : res.statusCode===409 ? 'Já existe um registo com esse email, BI ou código de barras.' : 'Erro interno. Tente novamente.'}));if(res.statusCode===500) console.error(e);}
