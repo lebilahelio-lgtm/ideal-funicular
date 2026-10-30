@@ -1,4 +1,4 @@
-import os, subprocess, tempfile, time, shutil, sqlite3, json
+import os, subprocess, tempfile, time, shutil, sqlite3, json, re
 from pathlib import Path
 Path("/tmp/loja-ui-test").mkdir(exist_ok=True)
 from playwright.sync_api import sync_playwright
@@ -136,12 +136,29 @@ try:
         page.screenshot(path='/tmp/loja-ui-test/recibo.png',full_page=True)
         page.get_by_role('button',name='Fechar',exact=True).last.click()
         page.get_by_role('button',name='Caixa',exact=True).click()
+        assert re.sub(r'\D','',page.locator('.cash-balance-copy h2').inner_text())=='690000'
+        assert page.locator('.cash-payment').count()==3
+        assert page.locator('.cash-kpi').count()==4
+        page.locator('#toast').evaluate("el=>el.className=''")
+        page.screenshot(path='/tmp/loja-ui-test/caixa-aberto.png',full_page=True)
+        page.set_viewport_size({'width':390,'height':844})
+        assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+        page.screenshot(path='/tmp/loja-ui-test/caixa-mobile.png',full_page=True)
+        page.set_viewport_size({'width':1440,'height':1050})
+        page.locator('.cash-receipt').first.click()
+        page.get_by_text('COMPROVATIVO INTERNO DE VENDA',exact=True).wait_for()
+        page.get_by_role('button',name='Fechar',exact=True).last.click()
         page.get_by_role('button',name='Fechar o meu caixa',exact=True).click()
+        assert re.sub(r'\D','',page.locator('.cash-modal-summary strong').inner_text())=='690000'
         page.locator('#closing').fill('6800')
         assert 'insuficiente' in page.locator('#cash-feedback').inner_text()
         assert '100' in page.locator('#cash-feedback').inner_text()
         page.get_by_role('button',name='Confirmar fecho',exact=True).click()
         page.locator('#modal').wait_for(state='hidden')
+        page.get_by_role('heading',name='O próximo turno começa consigo.').wait_for()
+        assert 'Falta 100' in page.locator('.cash-history').inner_text()
+        assert page.get_by_role('button',name='Abrir o meu caixa',exact=True).is_visible()
+        page.screenshot(path='/tmp/loja-ui-test/caixa-fechado.png',full_page=True)
         page.get_by_role('button',name='Visão geral',exact=True).click()
         page.get_by_role('heading',name='Visão geral',exact=True).wait_for()
         page.screenshot(path='/tmp/loja-ui-test/dashboard.png',full_page=True)

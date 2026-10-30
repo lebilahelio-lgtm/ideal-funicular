@@ -43,6 +43,7 @@ test('complete shop workflow, atomic stock, permissions and cash reconciliation'
   const receipt=(await request('sales',sale)).body;
   assert.equal(receipt.total,140000);assert.equal(receipt.paid,200000);assert.equal(receipt.change_due,60000);assert.equal(receipt.seller,'Ana');assert.equal(receipt.items[0].quantity,1.5);
   assert.equal((await request('state')).body.products[0].stock,48.5);
+  const firstCash=(await request('state')).body;assert.equal(firstCash.cash_summary.total_sales,140000);assert.equal(firstCash.cash_summary.cash_total,140000);assert.equal(firstCash.cash_summary.sales_count,1);assert.equal(firstCash.cash_recent[0].id,receipt.id);
   assert.equal((await request('shifts/close',{closing:6400})).body.expected,640000);
   assert.equal((await request('state')).body.shifts[0].closing,640000);
   const sellerData={name:'João',bi:'009763933CA042',birth_date:'1995-03-15',phone:'923456780',email:'joao@example.com',role:'vendedor'};
@@ -173,11 +174,14 @@ test('complete shop workflow, atomic stock, permissions and cash reconciliation'
   const inadequate=await request('sales',{...taxSale,paid:1350});assert.equal(inadequate.status,400);assert.match(inadequate.body.error,/insuficiente/);
   const taxReceipt=await request('sales',taxSale);assert.equal(taxReceipt.status,200);assert.equal(taxReceipt.body.fiscal_state,'applied');assert.equal(taxReceipt.body.tax_base,135000);assert.equal(taxReceipt.body.tax_total,14850);assert.equal(taxReceipt.body.total,149850);assert.equal(taxReceipt.body.items.length,2);
   assert.equal(taxReceipt.body.items[0].tax_snapshot.rate_bps,1400);assert.equal(taxReceipt.body.fiscal_snapshot.groups.length,2);
+  assert.equal((await request('sales',{...taxSale,method:'tpa'})).status,200);
+  assert.equal((await request('sales',{...taxSale,method:'transferencia'})).status,200);
+  const methodSummary=(await request('state')).body;assert.equal(methodSummary.cash_summary.sales_count,3);assert.equal(methodSummary.cash_summary.total_sales,449550);assert.equal(methodSummary.cash_summary.cash_total,149850);assert.equal(methodSummary.cash_summary.tpa_total,149850);assert.equal(methodSummary.cash_summary.transfer_total,149850);assert.equal(methodSummary.current_shift.cash_sales,149850);assert.equal(methodSummary.cash_recent.length,3);
   assert.equal((await request('fiscal/rules',{...ruleBody,id:firstRule.body.id,rate:15})).status,200);
   const stale=await request('sales',taxSale);assert.equal(stale.status,409);assert.match(stale.body.error,/regras fiscais mudaram/);
   const historic=(await request('sales/'+taxReceipt.body.id)).body;assert.equal(historic.tax_total,14850);assert.equal(historic.items[0].tax_snapshot.rate_bps,1400);
   const today=new Date(Date.now()+3600000).toISOString().slice(0,10);
-  const report=await request('fiscal/report',{start:today,end:today});assert.equal(report.status,200);assert.equal(report.body.tax_total,14850);assert.equal(report.body.applied_count,1);assert.ok(report.body.pending_count>0);assert.equal(report.body.groups.find(g=>g.id===firstRule.body.id).rate_bps,1400);
+  const report=await request('fiscal/report',{start:today,end:today});assert.equal(report.status,200);assert.equal(report.body.tax_total,44550);assert.equal(report.body.applied_count,3);assert.ok(report.body.pending_count>0);assert.equal(report.body.groups.find(g=>g.id===firstRule.body.id).rate_bps,1400);
   assert.equal((await request('fiscal/rules',{...ruleBody,id:firstRule.body.id,end_date:'2000-01-02'})).status,200);
   const latest=(await request('state')).body.fiscal;
   const expired=await request('sales',{...taxSale,expected_fiscal_revision:latest.revision});assert.equal(expired.status,400);assert.match(expired.body.error,/não está em vigor/);

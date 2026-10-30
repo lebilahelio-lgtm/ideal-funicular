@@ -76,6 +76,10 @@ O cálculo distingue preços com IVA incluído e preços sem IVA, distribui o de
 
 O relatório filtra todas as vendas do período, sem o limite de 100 do histórico geral. Identifica quantos comprovativos ainda têm imposto por apurar. Não é declaração de IVA, não inclui IVA dedutível nas compras e não faz apuramento específico do regime simplificado. O software continua sem certificação fiscal.
 
+## Ecrã de gestão de caixa
+
+O painel destaca o dinheiro esperado, fundo inicial, turno e responsável. Cartões separam vendas do turno, dinheiro, pagamentos eletrónicos e atendimentos. A distribuição por método usa todas as vendas do caixa ativo, sem o limite de 100 do histórico geral. Os últimos cinco recebimentos podem ser abertos para consultar o recibo. O histórico distingue conferência exata, falta e sobra, com os filtros existentes. Estados aberto, fechado e sem vendas têm apresentação própria; o resumo do turno pertence sempre ao utilizador autenticado, mesmo quando a gestão consulta caixas da equipa.
+
 ## Dados e operação
 
 Variáveis opcionais: `PORT`, `HOST`, `DATA_DIR` (padrão `./data`) e `COOKIE_SECURE=1` ao servir exclusivamente por HTTPS. Sessões normais duram 12 horas; uma sessão de recuperação pendente dura até 10 minutos e só permite alterar a senha; palavras-passe são protegidas com scrypt e salt. Não exponha a aplicação diretamente à Internet sem HTTPS, cópias de segurança e revisão operacional de segurança.
