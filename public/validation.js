@@ -12,3 +12,5 @@ export function nameError(value,product=false){
 export const gmailValid=value=>/^[a-z0-9_]+@gmail\.com$/.test(String(value??''));
 
 export const descriptiveText=value=>titleName(String(value??'').replace(/_{2,}/g,'-'));
+
+export function nameInitials(value){const names=String(value??'').normalize('NFC').trim().split(/\s+/u).filter(Boolean);return (names.length?[...names[0]][0]+(names.length>1?[...names.at(-1)][0]:''):'').toLocaleUpperCase('pt-AO');}
