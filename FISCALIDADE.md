@@ -55,3 +55,7 @@ Se as regras ou o total esperado mudarem enquanto o vendedor prepara o carrinho,
 ## Não incluído
 
 Certificação AGT, faturação legal completa, SAF-T, declaração de IVA, dedução do imposto das compras, imposto retido, regularizações, devoluções/notas de crédito, apuramento específico do regime simplificado e atualização automática de legislação/taxas. O resumo é uma ferramenta interna de gestão, não uma declaração pronta para submissão.
+
+### Cancelamentos internos
+
+Cancelamentos integrais autorizados são registados separadamente da venda original e excluídos do resumo interno de IVA. A venda e as regras fiscais originais são preservadas e o reembolso fica no movimento de caixa adequado. Esta operação interna não emite notas de crédito, não executa devoluções bancárias e não substitui regularizações legais. Consulte [OPERACAO.md](OPERACAO.md).

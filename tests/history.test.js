@@ -7,7 +7,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 const dir=mkdtempSync(join(tmpdir(),'loja-test-'));
 let child, base, owner='', seller='';
-async function request(path,data,cookie=owner){const r=await fetch(base+'/api/'+path,{method:data===undefined?'GET':'POST',headers:{'Content-Type':'application/json',...(cookie?{cookie}:{})},body:data===undefined?undefined:JSON.stringify(data)});const result={status:r.status,body:await r.json(),cookie:r.headers.get('set-cookie')?.split(';')[0]};
+async function request(path,data,cookie=owner){
+ if(path==='stock'&&data&&!data.supplier_id){const fixture=new DatabaseSync(join(dir,'loja.sqlite'));fixture.exec("INSERT OR IGNORE INTO partners(id,name,kind,phone,email,location) VALUES(1,'Fornecedor de Teste','fornecedor','923456789','teste@example.com','Luanda')");fixture.close();data={...data,supplier_id:1};}
+ if(path==='shifts/open'&&data){const fixture=new DatabaseSync(join(dir,'loja.sqlite'));for(let n=1;n<=10;n++)fixture.prepare('INSERT OR IGNORE INTO registers(number,name) VALUES(?,?)').run(n,'Balcão '+n);fixture.close();const pins=await request('account/pin',undefined,cookie),registers=await request('registers',undefined,cookie);data={...data,pin:pins.body.code,register_id:registers.body.registers?.find(r=>!r.shift_id)?.id};}
+const r=await fetch(base+'/api/'+path,{method:data===undefined?'GET':'POST',headers:{'Content-Type':'application/json',...(cookie?{cookie}:{})},body:data===undefined?undefined:JSON.stringify(data)});const result={status:r.status,body:await r.json(),cookie:r.headers.get('set-cookie')?.split(';')[0]};
  // These business-flow fixtures represent accounts that completed initial onboarding.
  // The mandatory password transition is exercised without this fixture in first-login.test.js.
  if(r.ok&&['setup','users','users/reset-password'].includes(path)&&result.body.password){const fixture=new DatabaseSync(join(dir,'loja.sqlite'));fixture.prepare('UPDATE users SET must_change_password=0 WHERE email=?').run(result.body.email);fixture.close();}

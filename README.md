@@ -90,7 +90,7 @@ Os dados persistem em `data/loja.sqlite`, com ficheiros WAL associados. Para uma
 
 ## Limites desta versão
 
-Os recibos são **comprovativos internos sem validade fiscal**, não faturas certificadas. A certificação fiscal, o enquadramento e as taxas legais aplicáveis precisam de confirmação antes de ativar o módulo. NIF e morada podem ser configurados, mas isso não certifica o software. Esta versão também não inclui devoluções/anulações, vendas a crédito, movimentos manuais de saída do caixa, fornecedores estruturados, múltiplas lojas ou backups automáticos. Entradas de stock representam aquisições e não debitam automaticamente o caixa de vendas. O histórico da interface é limitado; os registos completos permanecem na base de dados. Não existe integração com balanças ou pagamento bancário: o método de pagamento é registado após confirmação pelo operador.
+Os recibos são **comprovativos internos sem validade fiscal**, não faturas certificadas. A certificação fiscal, o enquadramento e as taxas legais aplicáveis precisam de confirmação antes de ativar o módulo. NIF e morada podem ser configurados, mas isso não certifica o software. Esta versão inclui cancelamento integral com reembolso registado, fornecedores estruturados, lotes e validades. Não inclui devoluções parciais, notas de crédito fiscais, vendas a crédito, movimentos gerais de tesouraria, múltiplas lojas ou backups automáticos. Entradas de stock representam aquisições e não debitam automaticamente o caixa de vendas. O histórico da interface é limitado; os registos completos permanecem na base de dados. Não existe integração com balanças ou pagamento bancário: o método de pagamento é registado após confirmação pelo operador.
 
 ## Teste de navegador opcional
 
@@ -126,3 +126,9 @@ O histórico apresenta **Histórico geral** e um único controlo **Pesquisar por
 ### Troca obrigatória da senha temporária
 
 O primeiro login com uma palavra-passe gerada pelo sistema abre apenas o formulário para definir uma nova senha pessoal. O servidor bloqueia as restantes áreas e operações até concluir a troca, incluindo após recarregar a página ou iniciar outra sessão. A nova senha deve ser diferente da temporária e cumprir as regras de complexidade. A reposição administrativa volta a exigir esta troca. Na atualização de bases existentes, contas sem registo de alteração pessoal da senha (ou com reposição administrativa posterior) passam a exigir a atualização; quem já alterou a senha mantém o acesso normal.
+
+### Balcões físicos, armazém e parceiros
+
+A evolução operacional está descrita em [OPERACAO.md](OPERACAO.md): balcões configuráveis, códigos pessoais semanais, funções de armazém e caixa, parceiros com contactos protegidos, lotes FEFO/FIFO, alertas de validade, saídas por desperdício/expiração e cancelamentos sem apagar históricos. O proprietário pode acumular responsabilidades e delegar ao gerente por permissão. O código de quatro algarismos é suplementar ao login. Para backup, guarde a base SQLite **e a chave `DATA_DIR/cash-pin.key`**.
+
+Todas as janelas modais usam cabeçalho azulado e botão X vermelho. Clicar fora e premir Esc não fecha nem limpa o formulário; o fecho é explícito pelos controlos da janela ou pela conclusão da operação.

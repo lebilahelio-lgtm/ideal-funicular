@@ -1,4 +1,5 @@
-import {permissions,permissionLabels,sellerKeys} from './public/permissions.js';
+import {operations} from './operations.js';
+import {permissions,permissionLabels,sellerKeys,permissionKeys,profileLabels} from './public/permissions.js';
 import {titleName,descriptiveText,nameError,gmailValid} from './public/validation.js';
 import http from 'node:http';
 import {calculateTaxBasket} from './public/tax.js';
@@ -56,6 +57,7 @@ transaction(()=>{
 });
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS one_owner ON users(role) WHERE role='proprietario' AND deleted_at IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS one_manager ON users(role) WHERE role='gerente' AND deleted_at IS NULL;`);
+const ops=operations(db,dir,audit);
 function generatePassword(){return 'Tt!'+randomBytes(12).toString('base64url')+randomInt(10,100);}
 function validPassword(value){
  if(typeof value!=='string' || value.length<8 || value.length>200 || !/[a-zA-Z]/.test(value) || !/\d/.test(value) || !/[^a-zA-Z0-9\s]/.test(value)) fail('A palavra-passe deve ter pelo menos 8 caracteres, letras, números e um carácter especial.');
@@ -104,8 +106,8 @@ function audit(user, action, detail) { run('INSERT INTO audit(user_id,action,det
 function transaction(fn) { db.exec('BEGIN IMMEDIATE'); try { const result = fn(); db.exec('COMMIT'); return result; } catch (e) { db.exec('ROLLBACK'); throw e; } }
 function manage(user) { if (!['gerente','proprietario'].includes(user.role)) fail('Acesso reservado ao gerente e proprietário.', 403); }
 function receipt(id) {
- const sale=one('SELECT s.*,u.name AS seller FROM sales s JOIN users u ON u.id=s.user_id WHERE s.id=?',id);
- return {...sale,fiscal_snapshot:sale?.fiscal_snapshot?JSON.parse(sale.fiscal_snapshot):null,items:all('SELECT * FROM items WHERE sale_id=?',id).map(i=>({...i,tax_snapshot:i.tax_snapshot?JSON.parse(i.tax_snapshot):null}))};
+ const sale=one('SELECT s.*,u.name AS seller,(SELECT created FROM sale_cancellations WHERE sale_id=s.id) AS cancelled_at,(SELECT r.number FROM registers r JOIN shifts sh ON sh.register_id=r.id WHERE sh.id=s.shift_id) AS register_number FROM sales s JOIN users u ON u.id=s.user_id WHERE s.id=?',id);
+ return {...sale,register:one('SELECT r.number,r.name FROM registers r JOIN shifts sh ON sh.register_id=r.id WHERE sh.id=?',sale?.shift_id??0),cancellation:one('SELECT c.*,u.name AS actor FROM sale_cancellations c JOIN users u ON u.id=c.actor_id WHERE c.sale_id=?',id),fiscal_snapshot:sale?.fiscal_snapshot?JSON.parse(sale.fiscal_snapshot):null,items:all('SELECT * FROM items WHERE sale_id=?',id).map(i=>({...i,lots:all('SELECT a.lot_id,a.quantity/1000.0 AS quantity,a.expires_on_snapshot AS expires_on FROM allocations a WHERE a.item_id=?',i.id),tax_snapshot:i.tax_snapshot?JSON.parse(i.tax_snapshot):null}))};
 }
 const attempts = new Map();
 async function api(req, res, path, body) {
@@ -142,16 +144,31 @@ async function api(req, res, path, body) {
     return { ok: true };
   }
   const token = /(?:^|;\s*)session=([a-f0-9]+)/.exec(req.headers.cookie || '')?.[1];
-  const user = one('SELECT u.id,u.name,u.email,u.bi,u.birth_date,u.phone,u.role,u.permissions,u.must_change_password,s.recovery FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires>? AND u.active=1 AND u.deleted_at IS NULL',token || '',Date.now());
+  const user = one('SELECT u.id,u.name,u.email,u.bi,u.birth_date,u.phone,u.role,u.permissions,u.job_type,u.must_change_password,s.recovery FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires>? AND u.active=1 AND u.deleted_at IS NULL',token || '',Date.now());
   if (!user) fail('Inicie sessão para continuar.',401);
-  user.permissions=permissions(user.role,JSON.parse(user.permissions||'{}'));
+  user.permissions=permissions(user.role,JSON.parse(user.permissions||'{}'),user.job_type);
   const allow=key=>{if(!user.permissions[key])fail('Sem permissão para esta área ou operação.',403);};
   if (path === '/api/logout' && req.method === 'POST') { run('DELETE FROM sessions WHERE token=?',token); res.setHeader('Set-Cookie','session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'); return { ok:true }; }
   if((user.recovery||user.must_change_password) && !['/api/state','/api/password','/api/logout'].includes(path)) fail('Defina uma nova palavra-passe para aceder à loja.',403);
   if((user.recovery||user.must_change_password) && path==='/api/state' && req.method==='GET') return {user,recovery_required:!!user.recovery,password_change_required:!!user.must_change_password};
+  if(path==='/api/account/pin'&&req.method==='GET')return ops.pinFor(user.id);
+  if(path==='/api/cash/pins'&&req.method==='GET'){allow('view_all_pins');return {pins:ops.allPins()};}
+  if(path==='/api/registers'&&req.method==='GET'){if(!user.permissions.cash&&!user.permissions.cash_manage)fail('Sem acesso aos balcões.',403);return {registers:ops.registers()};}
+  if(path==='/api/registers/config'&&req.method==='POST'){allow('cash_manage');if(!['proprietario','gerente'].includes(user.role))fail('Apenas a direção configura balcões.',403);return ops.configureRegisters(body,user);}
+  if(path==='/api/partners'&&req.method==='GET'){allow('partners_view');return {partners:ops.partners()};}
+  if(path==='/api/partners'&&req.method==='POST'){allow('partners_edit');return ops.partner(body,user);}
+  if(path==='/api/suppliers'&&req.method==='GET'){allow('stock_entry');return {suppliers:ops.suppliers()};}
+  if(path==='/api/suppliers'&&req.method==='POST'){allow('supplier_create');allow('stock_entry');return ops.partner(body,user,true);}
+  if(path==='/api/warehouse'&&req.method==='GET'){allow('warehouse');return {lots:ops.lots(),movements:all('SELECT m.*,p.name AS product,p.unit,u.name AS actor FROM movements m JOIN products p ON p.id=m.product_id JOIN users u ON u.id=m.user_id ORDER BY m.id DESC LIMIT 200')};}
+  if(path==='/api/lots/update'&&req.method==='POST'){allow('stock_entry');return ops.updateLot(body,user);}
+  if(path==='/api/warehouse/dispose'&&req.method==='POST'){allow('stock_exit');return ops.dispose(body,user);}
+  if(path==='/api/sales/cancel'&&req.method==='POST'){allow('sales_cancel');return ops.cancel(body,user);}
+  if(path==='/api/stock'&&req.method==='POST'){allow('stock_entry');return ops.receive(body,user);}
+  // PIN failures must commit outside the opening transaction to prevent retry bypass.
+  if(path==='/api/shifts/open'&&req.method==='POST'){allow('cash');ops.checkPin(user,body.pin);}
   if(req.method==='POST'){
    if(path.startsWith('/api/users')&&path!=='/api/users/transfer-owner')allow('users');
-   if(['/api/products','/api/stock'].includes(path))allow('stock_edit');
+   if(path==='/api/products')allow('stock_edit');
    if(path==='/api/products/tax'){allow('stock_edit');allow('fiscal');}
    if(path.startsWith('/api/fiscal/'))allow('fiscal');
    if(path.startsWith('/api/shifts/'))allow('cash');
@@ -160,7 +177,7 @@ async function api(req, res, path, body) {
   if(/^\/api\/sales\/\d+$/.test(path)&&!['sales','cash','history','dashboard'].some(key=>user.permissions[key]))fail('Sem acesso aos recibos.',403);
   if(path==='/api/sales/history'&&req.method==='POST'){
     allow('history');
-    const leader=user.role!=='vendedor',scope=body.scope??(leader?'all':'mine');
+    const leader=user.role!=='vendedor'||user.permissions.sales_cancel,scope=body.scope??(leader?'all':'mine');
     if(!leader&&scope!=='mine')fail('Só pode consultar as vendas dos seus próprios caixas.',403);
     if(scope!=='all'&&scope!=='mine'&&(!/^\d+$/.test(String(scope))||!Number.isSafeInteger(Number(scope))||Number(scope)<1))fail('Filtro de vendedor inválido.');
     const clauses=[],args=[];
@@ -172,32 +189,36 @@ async function api(req, res, path, body) {
     if(body.start&&body.end&&body.start>body.end)fail('A data inicial não pode ser posterior à data final.');
     if(body.method){if(!['dinheiro','tpa','transferencia'].includes(body.method))fail('Pagamento inválido.');clauses.push('s.method=?');args.push(body.method);}
     if(body.shift_id){const id=Number(body.shift_id);if(!Number.isSafeInteger(id)||id<1)fail('Caixa inválido.');clauses.push('s.shift_id=?');args.push(id);}
+    if(body.register_id){const id=Number(body.register_id);if(!Number.isSafeInteger(id)||id<1)fail('Balcão inválido.');clauses.push('s.shift_id IN(SELECT id FROM shifts WHERE register_id=?)');args.push(id);}
     const searchBy=body.search_by??'receipt',searchColumns={receipt:"printf('%05d',s.id)",customer:'s.customer',seller:'u.name'};
     if(!Object.hasOwn(searchColumns,searchBy))fail('Filtro de pesquisa inválido.');
     if(body.q){const q=String(body.q).trim();if(q.length>150)fail('Pesquisa demasiado longa.');clauses.push(`instr(lower(${searchColumns[searchBy]}),lower(?))>0`);args.push(q);}
     const page=Number(body.page??1),size=50;if(!Number.isSafeInteger(page)||page<1||page>1000000)fail('Página inválida.');
     const from='FROM sales s JOIN users u ON u.id=s.user_id'+(clauses.length?' WHERE '+clauses.join(' AND '):'');
-    const summary=one('SELECT COUNT(*) AS count,COALESCE(SUM(s.total),0) AS total '+from,...args);
+    const summary=one('SELECT COUNT(*) AS count,COALESCE(SUM(CASE WHEN NOT EXISTS(SELECT 1 FROM sale_cancellations c WHERE c.sale_id=s.id) THEN s.total ELSE 0 END),0) AS total '+from,...args);
     const pages=Math.max(1,Math.ceil(summary.count/size)),current=Math.min(page,pages);
-    return {sales:all('SELECT s.*,u.name AS seller '+from+' ORDER BY s.id DESC LIMIT ? OFFSET ?',...args,size,(current-1)*size),summary,page:current,pages,page_size:size,
+    return {sales:all('SELECT s.*,u.name AS seller,(SELECT created FROM sale_cancellations WHERE sale_id=s.id) AS cancelled_at,(SELECT r.number FROM registers r JOIN shifts sh ON sh.register_id=r.id WHERE sh.id=s.shift_id) AS register_number '+from+' ORDER BY s.id DESC LIMIT ? OFFSET ?',...args,size,(current-1)*size),summary,page:current,pages,page_size:size,
       sellers:leader?all("SELECT id,name,deleted_at FROM users WHERE id=? OR EXISTS (SELECT 1 FROM sales s WHERE s.user_id=users.id) ORDER BY name",user.id):[]};
   }
   if (path === '/api/state' && req.method === 'GET') {
-    const manager = user.role !== 'vendedor',p=user.permissions;
+    const manager = user.role !== 'vendedor'||user.permissions.sales_cancel,p=user.permissions;
     const viewSales=p.history||p.dashboard;
     const products = all('SELECT * FROM products WHERE active=1 ORDER BY name');
-    if(!p.products&&!p.sales&&!p.dashboard)products.length=0;
+    if(!p.products&&!p.sales&&!p.dashboard&&!p.stock_entry)products.length=0;
+    for(const product of products){product.physical_stock=product.stock;product.stock=ops.available(product.id);}
     if (!p.stock_edit) for (const product of products) delete product.pack_cost;
     const currentShift=one("SELECT s.*,(SELECT COALESCE(SUM(total),0) FROM sales WHERE shift_id=s.id AND method='dinheiro') AS cash_sales FROM shifts s WHERE user_id=? AND closed IS NULL",user.id);
-    const cashSummary=currentShift?one("SELECT COUNT(*) AS sales_count,COALESCE(SUM(total),0) AS total_sales,COALESCE(SUM(CASE WHEN method='dinheiro' THEN total ELSE 0 END),0) AS cash_total,COALESCE(SUM(CASE WHEN method='tpa' THEN total ELSE 0 END),0) AS tpa_total,COALESCE(SUM(CASE WHEN method='transferencia' THEN total ELSE 0 END),0) AS transfer_total,MAX(created) AS last_sale_at FROM sales WHERE shift_id=?",currentShift.id):null;
-    const cashRecent=currentShift?all('SELECT s.*,u.name AS seller FROM sales s JOIN users u ON u.id=s.user_id WHERE shift_id=? ORDER BY s.id DESC LIMIT 5',currentShift.id):[];
-    return { user, products, fiscal:fiscalState(db), current_shift:p.cash?currentShift:null,cash_summary:p.cash?cashSummary:null,cash_recent:p.cash?cashRecent:[], sales: viewSales?all(`SELECT s.*,u.name AS seller FROM sales s JOIN users u ON u.id=s.user_id ${manager ? '' : 'WHERE s.user_id=? AND EXISTS (SELECT 1 FROM shifts own WHERE own.id=s.shift_id AND own.user_id=s.user_id)'} ORDER BY s.id DESC LIMIT ${p.history?100:5}`, ...(manager ? [] : [user.id])):[],
-      shifts: p.cash?all(`SELECT s.*,u.name AS seller,(SELECT COALESCE(SUM(total),0) FROM sales WHERE shift_id=s.id AND method='dinheiro') AS cash_sales FROM shifts s JOIN users u ON u.id=s.user_id ${manager ? '' : 'WHERE s.user_id=?'} ORDER BY s.id DESC LIMIT 50`,...(manager ? [] : [user.id])):[],
-      users: p.users ? all('SELECT id,name,email,bi,birth_date,phone,role,active,permissions FROM users WHERE deleted_at IS NULL ORDER BY id').map(u=>({...u,permissions:permissions(u.role,JSON.parse(u.permissions||'{}'))})) : [],
-      purchases: p.stock_edit ? all('SELECT m.*,p.name AS product,p.unit,u.name AS actor FROM movements m JOIN products p ON p.id=m.product_id JOIN users u ON u.id=m.user_id ORDER BY m.id DESC LIMIT 100') : [],
+    if(currentShift)currentShift.cash_sales=ops.cashNet(currentShift.id);
+    const cashSummary=currentShift?one("SELECT COUNT(*) AS sales_count,COALESCE(SUM(total),0) AS total_sales,COALESCE(SUM(CASE WHEN method='dinheiro' THEN total ELSE 0 END),0) AS cash_total,COALESCE(SUM(CASE WHEN method='tpa' THEN total ELSE 0 END),0) AS tpa_total,COALESCE(SUM(CASE WHEN method='transferencia' THEN total ELSE 0 END),0) AS transfer_total,MAX(created) AS last_sale_at FROM sales WHERE shift_id=? AND NOT EXISTS(SELECT 1 FROM sale_cancellations c WHERE c.sale_id=sales.id)",currentShift.id):null;
+    if(cashSummary)cashSummary.cash_total=ops.cashNet(currentShift.id);
+    const cashRecent=currentShift?all('SELECT s.*,u.name AS seller,(SELECT created FROM sale_cancellations WHERE sale_id=s.id) AS cancelled_at,(SELECT r.number FROM registers r JOIN shifts sh ON sh.register_id=r.id WHERE sh.id=s.shift_id) AS register_number FROM sales s JOIN users u ON u.id=s.user_id WHERE shift_id=? ORDER BY s.id DESC LIMIT 5',currentShift.id):[];
+    return { user, products, registers:(p.cash||p.cash_manage)?ops.registers():[],expiry_alerts:p.warehouse?ops.lots().filter(l=>l.warning||l.unknown):[],fiscal:fiscalState(db), current_shift:p.cash?currentShift:null,cash_summary:p.cash?cashSummary:null,cash_recent:p.cash?cashRecent:[], sales: viewSales?all(`SELECT s.*,u.name AS seller,(SELECT created FROM sale_cancellations WHERE sale_id=s.id) AS cancelled_at,(SELECT r.number FROM registers r JOIN shifts sh ON sh.register_id=r.id WHERE sh.id=s.shift_id) AS register_number FROM sales s JOIN users u ON u.id=s.user_id ${manager ? '' : 'WHERE s.user_id=? AND EXISTS (SELECT 1 FROM shifts own WHERE own.id=s.shift_id AND own.user_id=s.user_id)'} ORDER BY s.id DESC LIMIT ${p.history?100:5}`, ...(manager ? [] : [user.id])):[],
+      shifts: p.cash?all(`SELECT s.*,u.name AS seller,(SELECT COALESCE(SUM(total),0) FROM sales WHERE shift_id=s.id AND method='dinheiro') - (SELECT COALESCE(SUM(cash_refund),0) FROM sale_cancellations WHERE refund_shift_id=s.id) AS cash_sales FROM shifts s JOIN users u ON u.id=s.user_id ${manager ? '' : 'WHERE s.user_id=?'} ORDER BY s.id DESC LIMIT 50`,...(manager ? [] : [user.id])):[],
+      users: p.users ? all('SELECT id,name,email,bi,birth_date,phone,role,active,permissions,job_type FROM users WHERE deleted_at IS NULL ORDER BY id').map(u=>({...u,permissions:permissions(u.role,JSON.parse(u.permissions||'{}'),u.job_type)})) : [],
+      purchases: (p.stock_edit||p.stock_entry) ? all('SELECT m.*,p.name AS product,p.unit,u.name AS actor FROM movements m JOIN products p ON p.id=m.product_id JOIN users u ON u.id=m.user_id ORDER BY m.id DESC LIMIT 100') : [],
       audit: p.activity ? all('SELECT a.*,u.name AS actor FROM audit a JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 100') : [],
-      chart: p.dashboard?all(`SELECT date(created,'+1 hour') AS day, SUM(total) AS total,COUNT(*) AS count FROM sales WHERE datetime(created,'+1 hour')>=date('now','+1 hour','-13 days') ${manager ? '' : 'AND user_id=?'} GROUP BY date(created,'+1 hour') ORDER BY day`,...(manager ? [] : [user.id])):[],
-      metrics: p.dashboard?one(`SELECT COALESCE(SUM(CASE WHEN date(created,'+1 hour')=date('now','+1 hour') THEN total ELSE 0 END),0) AS today,COUNT(CASE WHEN date(created,'+1 hour')=date('now','+1 hour') THEN 1 END) AS count,COALESCE(SUM(CASE WHEN datetime(created,'+1 hour')>=date('now','+1 hour','-6 days') THEN total ELSE 0 END),0) AS current_week,COALESCE(SUM(CASE WHEN datetime(created,'+1 hour')>=date('now','+1 hour','-13 days') AND datetime(created,'+1 hour')<date('now','+1 hour','-6 days') THEN total ELSE 0 END),0) AS previous_week FROM sales ${manager ? '' : 'WHERE user_id=?'}`,...(manager ? [] : [user.id])):{today:0,count:0,current_week:0,previous_week:0} };
+      chart: p.dashboard?all(`SELECT date(created,'+1 hour') AS day, SUM(total) AS total,COUNT(*) AS count FROM sales WHERE NOT EXISTS(SELECT 1 FROM sale_cancellations c WHERE c.sale_id=sales.id) AND datetime(created,'+1 hour')>=date('now','+1 hour','-13 days') ${manager ? '' : 'AND user_id=?'} GROUP BY date(created,'+1 hour') ORDER BY day`,...(manager ? [] : [user.id])):[],
+      metrics: p.dashboard?one(`SELECT COALESCE(SUM(CASE WHEN date(created,'+1 hour')=date('now','+1 hour') THEN total ELSE 0 END),0) AS today,COUNT(CASE WHEN date(created,'+1 hour')=date('now','+1 hour') THEN 1 END) AS count,COALESCE(SUM(CASE WHEN datetime(created,'+1 hour')>=date('now','+1 hour','-6 days') THEN total ELSE 0 END),0) AS current_week,COALESCE(SUM(CASE WHEN datetime(created,'+1 hour')>=date('now','+1 hour','-13 days') AND datetime(created,'+1 hour')<date('now','+1 hour','-6 days') THEN total ELSE 0 END),0) AS previous_week FROM sales WHERE NOT EXISTS(SELECT 1 FROM sale_cancellations c WHERE c.sale_id=sales.id) ${manager ? '' : 'AND user_id=?'}`,...(manager ? [] : [user.id])):{today:0,count:0,current_week:0,previous_week:0} };
   }
   if(path==='/api/fiscal/settings' && req.method==='POST') return transaction(()=>{
     const result=saveFiscalSettings(db,body,user);audit(user,'Configuração fiscal',`Regime ${body.regime}; cálculo de IVA ${body.enabled?'ativo':'pendente'}; preços ${body.price_mode==='included'?'com IVA incluído':'sem IVA'}.`);return result;
@@ -206,16 +227,16 @@ async function api(req, res, path, body) {
     const previous=body.id?one('SELECT * FROM tax_rules WHERE id=?',body.id):null;
     const result=saveTaxRule(db,body,user);audit(user,'Regra de IVA',`${body.id?'Alterou':'Criou'} regra #${result.id}: ${body.name}, ${body.rate}%, ${body.kind}; anterior ${previous?previous.rate_bps/100+'%':'nenhuma'}.`);return result;
   });
-  if(path==='/api/fiscal/report' && req.method==='POST'){manage(user);return taxReport(db,body);}
+  if(path==='/api/fiscal/report' && req.method==='POST'){allow('fiscal');return taxReport(db,body);}
   if(path==='/api/products/tax' && req.method==='POST') return transaction(()=>{
-    manage(user);const rule=one('SELECT * FROM tax_rules WHERE id=? AND active=1',body.tax_rule_id);
+    allow('stock_edit');const rule=one('SELECT * FROM tax_rules WHERE id=? AND active=1',body.tax_rule_id);
     if(!rule)fail('Escolha uma regra fiscal ativa.');
     if(!Array.isArray(body.ids)||!body.ids.length||body.ids.length>500||body.ids.some(id=>!Number.isSafeInteger(id)))fail('Escolha de 1 a 500 produtos.');
     for(const id of new Set(body.ids)){if(!one('SELECT id FROM products WHERE id=?',id))fail('Produto inexistente.');run('UPDATE products SET tax_rule_id=? WHERE id=?',rule.id,id);}
     audit(user,'Classificação fiscal',`Aplicou a regra #${rule.id} a ${new Set(body.ids).size} produtos.`);return {ok:true};
   });
   if (path === '/api/products' && req.method === 'POST') {
-    manage(user);
+    allow('stock_edit');
     if(nameError(body.name,true))fail(nameError(body.name,true));
     const name=titleName(text(body.name,'Produto')), category=descriptiveText(text(body.category,'Categoria')), unit=text(body.unit,'Unidade'), pack=descriptiveText(text(body.pack_type,'Embalagem'));
     if (!['un','kg','L','g','mL'].includes(unit)) fail('Unidade não suportada.');
@@ -232,30 +253,29 @@ async function api(req, res, path, body) {
         if (existing.unit!==unit && (existing.stock>0 || one('SELECT id FROM items WHERE product_id=? LIMIT 1',body.id))) fail('Não pode alterar a unidade de um produto com stock ou vendas. Crie outro produto.');
         run('UPDATE products SET name=?,category=?,unit=?,barcode=?,minimum=?,pack_type=?,pack_size=?,pack_cost=?,price=? WHERE id=?',name,category,unit,barcode,minimum,pack,size,cost,price,body.id); id=body.id;
       } else { id=Number(run('INSERT INTO products(name,category,unit,barcode,minimum,pack_type,pack_size,pack_cost,price) VALUES(?,?,?,?,?,?,?,?,?)',name,category,unit,barcode,minimum,pack,size,cost,price).lastInsertRowid); }
-      run('UPDATE products SET tax_rule_id=? WHERE id=?',taxRule,id);
+      if(body.expiry_required!==undefined&&typeof body.expiry_required!=='boolean')fail('Indique se o produto tem validade.');
+      const expiryRequired=body.expiry_required===undefined?(body.id?one('SELECT expiry_required FROM products WHERE id=?',id).expiry_required:0):Number(body.expiry_required===true);
+      const warning=body.expiry_warning_days??(body.id?one('SELECT expiry_warning_days FROM products WHERE id=?',id).expiry_warning_days:7);if(!Number.isInteger(warning)||warning<1||warning>3650)fail('O alerta de validade deve estar entre 1 e 3650 dias.');
+      run('UPDATE products SET tax_rule_id=?,expiry_required=?,expiry_warning_days=? WHERE id=?',taxRule,expiryRequired,warning,id);
       audit(user,'Produto',`${body.id ? 'Atualizou' : 'Criou'} ${name}`); return {id};
     });
   }
-  if (path === '/api/stock' && req.method === 'POST') {
-    manage(user);
-    const p=one('SELECT * FROM products WHERE id=?',body.product_id); if (!p) fail('Produto inexistente.',404);
-    const packs=number(body.packs,'Embalagens',0.001), quantity=Math.round(packs*p.pack_size*1000)/1000, reason=descriptiveText(text(body.reason,'Motivo'));
-    return transaction(()=>{ run('UPDATE products SET stock=ROUND(stock+?,3) WHERE id=?',quantity,p.id); run('INSERT INTO movements(product_id,user_id,quantity,cost,reason) VALUES(?,?,?,?,?)',p.id,user.id,quantity,Math.round(packs*p.pack_cost),reason); audit(user,'Entrada de stock',`${p.name}: +${quantity} ${p.unit} • ${reason}`); return {ok:true}; });
-  }
   if (path === '/api/shifts/open' && req.method === 'POST') return transaction(()=>{
     if (one('SELECT id FROM shifts WHERE user_id=? AND closed IS NULL',user.id)) fail('Já tem um caixa aberto.');
-    const id=Number(run('INSERT INTO shifts(user_id,opening) VALUES(?,?)',user.id,money(body.opening,'Fundo inicial')).lastInsertRowid); audit(user,'Abertura de caixa',`Caixa #${id}`); return {id};
+    const register=one('SELECT * FROM registers WHERE id=? AND active=1',body.register_id);if(!register)fail('Escolha um balcão disponível.');
+    if(one('SELECT id FROM shifts WHERE register_id=? AND closed IS NULL',register.id))fail('Este balcão já está ocupado.',409);
+    const id=Number(run('INSERT INTO shifts(user_id,opening,register_id) VALUES(?,?,?)',user.id,money(body.opening,'Fundo inicial'),register.id).lastInsertRowid);audit(user,'Abertura de caixa',`Balcão ${register.number}; turno #${id}`);return {id,register_id:register.id};
   });
   if (path === '/api/shifts/close' && req.method === 'POST') return transaction(()=>{
     const shift=one('SELECT * FROM shifts WHERE user_id=? AND closed IS NULL',user.id); if (!shift) fail('Não tem caixa aberto.');
-    const expected=shift.opening+one("SELECT COALESCE(SUM(total),0) AS total FROM sales WHERE shift_id=? AND method='dinheiro'",shift.id).total;
+    const expected=shift.opening+ops.cashNet(shift.id);
     const closing=money(body.closing,'Valor contado'),comparison=compareAmounts(expected,closing);if(!comparison.ok)fail(comparison.error); run('UPDATE shifts SET closed=CURRENT_TIMESTAMP,closing=?,expected=? WHERE id=?',closing,expected,shift.id); audit(user,'Fecho de caixa',`Caixa #${shift.id}; diferença ${(closing-expected)/100} Kz`); return {expected,closing,difference:comparison.difference,warning:comparison.shortfall?`Valor em caixa insuficiente. Faltam ${formatMoney(comparison.shortfall)} face ao esperado.`:comparison.excess?`Existem ${formatMoney(comparison.excess)} a mais no caixa.`:null};
   });
   if (path === '/api/sales' && req.method === 'POST') return transaction(()=>{
     const shift=one('SELECT id FROM shifts WHERE user_id=? AND closed IS NULL',user.id); if (!shift) fail('Abra o caixa antes de vender.');
     if (!Array.isArray(body.items) || !body.items.length || body.items.length>100) fail('Adicione produtos à venda.');
     const seen=new Set();
-    const items=body.items.map(i=>{ if (seen.has(i.product_id)) fail('Produto repetido.'); seen.add(i.product_id); const p=one('SELECT * FROM products WHERE id=? AND active=1',i.product_id); if (!p) fail('Produto indisponível.'); const quantity=number(i.quantity,'Quantidade',0.001,1e7); if (Math.abs(quantity*1000-Math.round(quantity*1000))>1e-6 || (p.unit==='un' && !Number.isInteger(quantity))) fail('Quantidade inválida para a unidade.'); if (quantity>p.stock) fail(`Stock insuficiente: ${p.name}. Disponível: ${p.stock} ${p.unit}; pedido: ${quantity} ${p.unit}. Faltam ${Math.round((quantity-p.stock)*1000)/1000} ${p.unit}.`); return {...p,quantity,total:Math.round(p.price*quantity)}; });
+    const items=body.items.map(i=>{ if (seen.has(i.product_id)) fail('Produto repetido.'); seen.add(i.product_id); const p=one('SELECT * FROM products WHERE id=? AND active=1',i.product_id); if (!p) fail('Produto indisponível.'); const quantity=number(i.quantity,'Quantidade',0.001,1e7); if (Math.abs(quantity*1000-Math.round(quantity*1000))>1e-6 || (p.unit==='un' && !Number.isInteger(quantity))) fail('Quantidade inválida para a unidade.'); p.stock=ops.available(p.id);if (quantity>p.stock) fail(`Stock insuficiente: ${p.name}. Disponível: ${p.stock} ${p.unit}; pedido: ${quantity} ${p.unit}. Faltam ${Math.round((quantity-p.stock)*1000)/1000} ${p.unit}.`); return {...p,quantity,total:Math.round(p.price*quantity)}; });
     const discount=money(body.discount,'Desconto'),paid=money(body.paid,'Valor recebido'),fiscal=fiscalState(db);
     if(body.expected_fiscal_revision!==undefined&&body.expected_fiscal_revision!==fiscal.revision)fail('As regras fiscais mudaram. Atualize os preços/IVA no ponto de venda e confirme os valores antes de finalizar.',409);
     if(fiscal.settings.enabled&&body.expected_fiscal_revision!==fiscal.revision)fail('Atualize os preços/IVA para confirmar o enquadramento fiscal antes de vender.',409);
@@ -265,14 +285,14 @@ async function api(req, res, path, body) {
     const total=result.total,subtotal=basket.subtotal;
     const snapshot={company_name:'TT LEBILA',company_nif:fiscal.settings.company_nif,company_address:fiscal.settings.company_address,regime:fiscal.settings.regime,price_mode:fiscal.settings.price_mode,legal_basis:fiscal.settings.legal_basis,confirmed_by:fiscal.settings.confirmed_by,confirmed_at:fiscal.settings.confirmed_at,revision:fiscal.revision,groups:basket.groups};
     const id=Number(run('INSERT INTO sales(user_id,shift_id,customer,subtotal,discount,total,paid,change_due,method,tax_base,tax_total,fiscal_state,fiscal_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',user.id,shift.id,descriptiveText(body.customer || 'Consumidor final').slice(0,150),subtotal,discount,total,paid,paid-total,body.method,basket.tax_base,basket.tax_total,basket.fiscal_state,JSON.stringify(snapshot)).lastInsertRowid);
-    for(const i of basket.lines){run('INSERT INTO items(sale_id,product_id,name,unit,quantity,price,total,discount_amount,tax_base,tax_amount,taxed_total,tax_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',id,i.id,i.name,i.unit,i.quantity,i.price,i.total,i.discount_amount,i.tax_base,i.tax_amount,i.taxed_total,i.tax_snapshot?JSON.stringify(i.tax_snapshot):null);run('UPDATE products SET stock=ROUND(stock-?,3) WHERE id=?',i.quantity,i.id);}
+    for(const i of basket.lines){const itemId=Number(run('INSERT INTO items(sale_id,product_id,name,unit,quantity,price,total,discount_amount,tax_base,tax_amount,taxed_total,tax_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',id,i.id,i.name,i.unit,i.quantity,i.price,i.total,i.discount_amount,i.tax_base,i.tax_amount,i.taxed_total,i.tax_snapshot?JSON.stringify(i.tax_snapshot):null).lastInsertRowid);ops.allocate(itemId,i.id,i.quantity);run('UPDATE products SET stock=ROUND(stock-?,3) WHERE id=?',i.quantity,i.id);}
     audit(user,'Venda',`Recibo #${id}; total ${total/100} Kz`);return receipt(id);
   });
-  if (/^\/api\/sales\/\d+$/.test(path) && req.method==='GET') { const r=receipt(Number(path.split('/').pop())); if(!r.id) fail('Recibo inexistente.',404); if((user.role==='vendedor'||(!user.permissions.history&&!user.permissions.dashboard)) && (r.user_id!==user.id||!one('SELECT id FROM shifts WHERE id=? AND user_id=?',r.shift_id,user.id))) fail('Sem permissão.',403); return r; }
+  if (/^\/api\/sales\/\d+$/.test(path) && req.method==='GET') { const r=receipt(Number(path.split('/').pop())); if(!r.id) fail('Recibo inexistente.',404); if(((user.role==='vendedor'&&!user.permissions.sales_cancel)||(!user.permissions.history&&!user.permissions.dashboard&&!user.permissions.sales_cancel)) && (r.user_id!==user.id||!one('SELECT id FROM shifts WHERE id=? AND user_id=?',r.shift_id,user.id))) fail('Sem permissão.',403); return r; }
   if(path==='/api/users' && req.method==='POST') {
-    manage(user); const role=text(body.role,'Perfil'); if(!['gerente','vendedor'].includes(role)) fail('Só pode cadastrar gerentes ou vendedores. Para mudar o proprietário, use a transferência de propriedade.');
+    manage(user); const profile=text(body.role,'Perfil'),role=profile==='gerente'?'gerente':'vendedor'; if(!Object.hasOwn(profileLabels,profile)) fail('Escolha um perfil de equipa válido. Para mudar o proprietário, use a transferência de propriedade.');
     if(user.role==='gerente' && role!=='vendedor') fail('Apenas o proprietário pode gerir gerentes e proprietários.',403);
-    return transaction(()=>{const result=createUser(body,role);if(user.role==='gerente'){const defaults=permissions(role);const initial=Object.fromEntries(Object.keys(defaults).map(key=>[key,defaults[key]&&user.permissions[key]]));run('UPDATE users SET permissions=? WHERE id=?',JSON.stringify(initial),result.id);}audit(user,'Utilizador',`Criou a conta #${result.id} (${role})`);return result;});
+    return transaction(()=>{const result=createUser(body,role);const job=profile==='vendedor'?'atendente':profile;run('UPDATE users SET job_type=? WHERE id=?',job,result.id);if(user.role==='gerente'){const defaults=permissions(role,{},job);const initial=Object.fromEntries(Object.keys(defaults).map(key=>[key,defaults[key]&&user.permissions[key]]));run('UPDATE users SET permissions=? WHERE id=?',JSON.stringify(initial),result.id);}audit(user,'Utilizador',`Criou a conta #${result.id} (${role})`);return result;});
   }
   if(path==='/api/profile' && req.method==='POST') return transaction(()=>{
     rejectIdentity(body);const p=contacts(body);
@@ -308,23 +328,24 @@ async function api(req, res, path, body) {
   });
   if(path==='/api/users/access' && req.method==='POST') return transaction(()=>{
     manage(user);rejectIdentity(body);const target=one('SELECT * FROM users WHERE id=? AND deleted_at IS NULL',body.id); if(!target) fail('Utilizador inexistente.'); if(target.id===user.id) fail('Não pode alterar o seu próprio acesso.');
-    const role=body.role; if(!['gerente','vendedor'].includes(role) || typeof body.active!=='boolean') fail('Acesso inválido.');
+    const profile=body.role,role=profile==='gerente'?'gerente':'vendedor',job=profile==='vendedor'?'atendente':profile; if(!Object.hasOwn(profileLabels,profile) || typeof body.active!=='boolean') fail('Acesso inválido.');
     if(user.role==='gerente' && (target.role!=='vendedor' || role!=='vendedor')) fail('Apenas o proprietário pode gerir este perfil.',403);
     if(target.role==='proprietario') fail('O proprietário só pode ser substituído por transferência de propriedade.',403);
     if(role==='gerente' && one("SELECT id FROM users WHERE role='gerente' AND deleted_at IS NULL AND id<>?",target.id)) fail('Já existe um gerente. Remova ou altere o gerente atual primeiro.',409);
-    let configured=role===target.role?JSON.parse(target.permissions||'{}'):{};
+    let configured=role===target.role&&job===target.job_type?JSON.parse(target.permissions||'{}'):{};
     if(body.permissions!==undefined){
       if(!body.permissions||typeof body.permissions!=='object'||Array.isArray(body.permissions))fail('Permissões inválidas.');
       for(const [key,value] of Object.entries(body.permissions)){
         if(!Object.hasOwn(permissionLabels,key)||typeof value!=='boolean')fail('Permissão inválida.');
-        if(role==='vendedor'&&!sellerKeys.includes(key)&&value)fail('Vendedores não podem gerir stock, equipa, atividades ou regras fiscais.',403);
+        if(role==='vendedor'&&!permissionKeys(role,job).includes(key)&&value)fail('Vendedores não podem gerir stock, equipa, atividades ou regras fiscais.',403);
+        if(key==='view_all_pins'&&user.role!=='proprietario'&&value)fail('Só o proprietário delega consulta de códigos.',403);
         if(user.role==='gerente'&&value&&!user.permissions[key])fail('Não pode conceder um acesso que não possui.',403);
       }
       configured={...configured,...body.permissions};
     }
-    const effective=permissions(role,configured);
+    const effective=permissions(role,configured,job);
     if(!effective.cash&&one('SELECT id FROM shifts WHERE user_id=? AND closed IS NULL',target.id))fail('Feche primeiro o caixa deste utilizador antes de retirar o acesso ao caixa.');
-    run('UPDATE users SET role=?,active=?,permissions=? WHERE id=?',role,Number(body.active),JSON.stringify(effective),target.id);run('DELETE FROM sessions WHERE user_id=?',target.id);audit(user,'Permissões',`${target.name}: ${role}, ${body.active ? 'ativo' : 'inativo'}; acessos ${JSON.stringify(effective)}`);return {ok:true};
+    run('UPDATE users SET role=?,active=?,permissions=?,job_type=? WHERE id=?',role,Number(body.active),JSON.stringify(effective),job,target.id);run('DELETE FROM sessions WHERE user_id=?',target.id);audit(user,'Permissões',`${target.name}: ${role}, ${body.active ? 'ativo' : 'inativo'}; acessos ${JSON.stringify(effective)}`);return {ok:true};
   });
   if(path==='/api/users/remove' && req.method==='POST') return transaction(()=>{
     manage(user);const target=one('SELECT * FROM users WHERE id=? AND deleted_at IS NULL',body.id);
@@ -332,7 +353,7 @@ async function api(req, res, path, body) {
     if(target.id===user.id || target.role==='proprietario' || (user.role==='gerente' && target.role!=='vendedor')) fail('Não pode remover este utilizador.',403);
     if(one('SELECT id FROM shifts WHERE user_id=? AND closed IS NULL',target.id)) fail('Este utilizador precisa de fechar o caixa antes de ser removido.');
     run("UPDATE users SET active=0,deleted_at=CURRENT_TIMESTAMP,role='vendedor' WHERE id=?",target.id);
-    run('DELETE FROM sessions WHERE user_id=?',target.id);run('UPDATE recoveries SET used=1 WHERE user_id=?',target.id);
+    run('DELETE FROM sessions WHERE user_id=?',target.id);run('DELETE FROM cash_pins WHERE user_id=?',target.id);run('UPDATE recoveries SET used=1 WHERE user_id=?',target.id);
     audit(user,'Remoção de utilizador',`Removeu a conta #${target.id}; histórico preservado.`);return {ok:true};
   });
   if(path==='/api/users/transfer-owner' && req.method==='POST') return transaction(()=>{
@@ -340,7 +361,7 @@ async function api(req, res, path, body) {
     if(!verify(String(body.password||''),one('SELECT password FROM users WHERE id=?',user.id).password)) fail('Palavra-passe atual incorreta.');
     const target=one('SELECT * FROM users WHERE id=? AND active=1 AND deleted_at IS NULL',body.id);
     if(!target || target.id===user.id) fail('Escolha outra pessoa ativa para assumir a propriedade.');
-    run("UPDATE users SET role='vendedor' WHERE id=?",user.id);run("UPDATE users SET role='proprietario' WHERE id=?",target.id);
+    run("UPDATE users SET role='vendedor',job_type='atendente' WHERE id=?",user.id);run("UPDATE users SET role='proprietario',job_type='proprietario' WHERE id=?",target.id);
     run('DELETE FROM sessions WHERE user_id IN (?,?)',user.id,target.id);
     audit(user,'Transferência de propriedade',`Transferiu a propriedade para a conta #${target.id}; proprietário anterior passou a vendedor.`);return {ok:true};
   });

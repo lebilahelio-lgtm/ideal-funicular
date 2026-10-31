@@ -73,6 +73,14 @@ try:
         assert_required_markers(page)
         assert not page.locator('#tax_rule_id').evaluate('(el)=>el.required')
         page.locator('#name').fill('Arroz Branco')
+        page.mouse.click(8,8)
+        assert page.locator('#modal').evaluate('(el)=>el.open')
+        assert page.locator('#name').input_value()=='Arroz Branco'
+        page.keyboard.press('Escape')
+        assert page.locator('#modal').evaluate('(el)=>el.open')
+        assert page.locator('#name').input_value()=='Arroz Branco'
+        assert page.locator('.modal-close').evaluate('(el)=>{const c=getComputedStyle(el).backgroundColor.match(/\\d+/g).map(Number);return c[0]>c[1]*2&&c[0]>c[2]*2;}')
+        page.screenshot(path='/tmp/loja-ui-test/modal-azul-fecho.png')
         page.locator('#category').fill('alimentos__secos')
         assert page.locator('#category').input_value()=='Alimentos-Secos'
         page.locator('#unit').select_option('kg')
@@ -85,6 +93,13 @@ try:
         page.get_by_role('button',name='Guardar produto').click()
         page.get_by_role('button',name='Entrada',exact=True).click()
         assert_required_markers(page)
+        page.locator('#add-supplier').click()
+        page.locator('#partner_name').fill('Fornecedor Teste')
+        page.locator('#partner_phone').fill('923456789')
+        page.locator('#partner_email').fill('compras@fornecedor.ao')
+        page.locator('#partner_location').fill('Luanda')
+        page.get_by_role('button',name='Guardar parceiro',exact=True).click()
+        page.locator('#supplier_id option[value="1"]').wait_for(state='attached')
         page.locator('#packs').fill('2')
         page.locator('#reason').fill('Compra inicial')
         page.get_by_role('button',name='Confirmar entrada').click()
@@ -97,6 +112,7 @@ try:
         page.locator('#price').fill('500')
         page.get_by_role('button',name='Guardar produto').click()
         page.locator('tr',has=page.get_by_text('Sabonete',exact=True)).get_by_role('button',name='Entrada',exact=True).click()
+        page.locator('#supplier_id').select_option('1')
         page.locator('#packs').fill('1')
         page.locator('#reason').fill('Compra de sabonete')
         page.get_by_role('button',name='Confirmar entrada').click()
@@ -104,6 +120,8 @@ try:
         page.get_by_role('button',name='Ponto de venda',exact=True).click()
         page.get_by_role('button',name='Abrir caixa',exact=True).click()
         assert_required_markers(page)
+        pin=page.request.get('http://127.0.0.1:3001/api/account/pin').json()['code']
+        for i,digit in enumerate(pin):page.locator('[data-pin-digit]').nth(i).fill(digit)
         page.locator('#opening').fill('5000')
         page.locator('#shift-form').get_by_role('button',name='Abrir caixa',exact=True).click()
         page.locator('#modal').wait_for(state='hidden')
@@ -210,7 +228,7 @@ try:
         page.get_by_role('button',name='Limpar filtros',exact=True).click()
         page.locator('#history-results tbody tr').wait_for()
         assert page.locator('#scope').input_value()=='all'
-        assert 'Caixa #0001' in page.locator('#history-results').inner_text()
+        assert 'Balcão 1' in page.locator('#history-results').inner_text()
         page.screenshot(path='/tmp/loja-ui-test/historico-filtros.png',full_page=True)
         page.set_viewport_size({'width':390,'height':844})
         assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
@@ -287,13 +305,13 @@ try:
         page.get_by_role('button',name='Já guardei a palavra-passe').click()
         manager_row=page.get_by_role('row').filter(has=page.get_by_role('cell',name='Maria Silva 009763934CA042'))
         manager_row.get_by_role('button',name='Acesso',exact=True).click()
-        assert page.locator('[data-permission]').count()==9
+        assert page.locator('[data-permission]').count()==18
         page.locator('[data-permission="stock_edit"]').uncheck()
         page.locator('[data-permission="activity"]').uncheck()
         page.get_by_role('button',name='Guardar permissões',exact=True).click()
         page.locator('#modal').wait_for(state='hidden')
         page.get_by_role('button',name='Adicionar pessoa').click()
-        assert page.locator('#role option').count()==1
+        assert page.locator('#role option').count()==4
         page.locator('#modal [data-action="close"]').last.click()
         page.get_by_role('button',name='A minha conta',exact=True).click()
         assert page.locator('#app #name').count()==0
@@ -309,7 +327,7 @@ try:
         page.get_by_role('button',name='Alterar palavra-passe',exact=True).click()
         page.get_by_text('Palavra-passe alterada. Outras sessões foram terminadas.',exact=True).wait_for()
         page.get_by_role('button',name='Produtos e stock',exact=True).click()
-        page.get_by_role('heading',name='Compras e entradas de stock').wait_for()
+        page.get_by_role('heading',name='Compras e movimentos de stock').wait_for()
         assert 'Compra Inicial' in page.locator('body').inner_text()
         page.get_by_role('button',name='Terminar sessão',exact=True).click()
         page.locator('#identifier').fill('009763932CA042')
@@ -384,6 +402,8 @@ try:
         page.locator('.tax-product-option',has=page.get_by_text('Sabonete',exact=True)).locator('small',has_text='Isento').wait_for()
         page.get_by_role('button',name='Ponto de venda',exact=True).click()
         page.get_by_role('button',name='Abrir caixa',exact=True).click()
+        pin=page.request.get('http://127.0.0.1:3001/api/account/pin').json()['code']
+        for i,digit in enumerate(pin):page.locator('[data-pin-digit]').nth(i).fill(digit)
         page.locator('#opening').fill('0')
         page.locator('#shift-form').get_by_role('button',name='Abrir caixa',exact=True).click()
         page.locator('#modal').wait_for(state='hidden')
@@ -405,6 +425,65 @@ try:
         page.locator('#tax-report-result .metrics').wait_for()
         assert '140' in page.locator('#tax-report-result').inner_text()
         page.screenshot(path='/tmp/loja-ui-test/iva-config.png',full_page=True)
+        # New operations panels: personal PIN, physical registers, partners, warehouse and cancellation.
+        page.get_by_role('button',name='A minha conta',exact=True).click()
+        page.locator('.pin-display span').first.wait_for()
+        assert page.locator('.pin-display span').count()==4
+        page.get_by_role('button',name='Consultar códigos da equipa',exact=True).click()
+        page.get_by_role('heading',name='Códigos pessoais da equipa',exact=True).wait_for()
+        page.locator('#modal [data-action="close"]').first.click()
+        page.get_by_role('button',name='Caixa',exact=True).click()
+        page.get_by_role('button',name='Definir balcões',exact=True).click()
+        page.locator('#count').fill('2')
+        page.get_by_role('button',name='Guardar balcões',exact=True).click()
+        page.locator('.register-tile').nth(1).wait_for()
+        assert page.locator('.register-tile.occupied').count()==1
+        assert page.locator('.register-tile.available').count()==1
+        page.screenshot(path='/tmp/loja-ui-test/balcoes.png',full_page=True)
+        page.get_by_role('button',name='Parceiros',exact=True).click()
+        page.locator('#partners-results tbody tr').wait_for()
+        assert 'compras@fornecedor.ao' in page.locator('#partners-results').inner_text()
+        page.get_by_role('button',name='Adicionar parceiro',exact=True).click()
+        page.locator('#partner_name').fill('Parceiro Logístico')
+        page.locator('#partner_type').select_option('outro')
+        page.locator('#partner_phone').fill('923456789')
+        page.locator('#partner_email').fill('contacto@parceiro.ao')
+        page.locator('#partner_location').fill('Luanda')
+        page.get_by_role('button',name='Guardar parceiro',exact=True).click()
+        page.locator('#partners-results tbody tr').nth(1).wait_for()
+        page.locator('#partner_kind').select_option('fornecedor')
+        assert page.locator('#partners-results tbody tr').count()==1
+        page.get_by_role('button',name='Armazém e validades',exact=True).click()
+        page.locator('#warehouse-results tbody tr').first.wait_for()
+        assert page.locator('[data-lot-edit]').count()==2
+        page.screenshot(path='/tmp/loja-ui-test/armazem.png',full_page=True)
+        # Lower warehouse worker gets entry/expiry tools, never the fixed catalogue or partner contacts.
+        worker=page.request.post('http://127.0.0.1:3001/api/users',data={'name':'Pessoa Armazém','bi':'009763935CA042','birth_date':'1990-01-01','email':'warehouse@gmail.com','role':'armazem'}).json()
+        wc=browser.new_context(viewport={'width':1440,'height':1050});wp=wc.new_page()
+        wp.goto('http://127.0.0.1:3001')
+        wp.locator('#identifier').fill('warehouse@gmail.com');wp.locator('#password').fill(worker['password'])
+        wp.get_by_role('button',name='Iniciar sessão',exact=True).click()
+        wp.get_by_role('heading',name='Crie uma nova palavra-passe',exact=True).wait_for()
+        wp.locator('#password').fill('SenhaArmazem123!');wp.locator('#confirmation').fill('SenhaArmazem123!')
+        wp.get_by_role('button',name='Guardar e entrar na loja').click()
+        wp.get_by_role('heading',name='Produtos e stock',exact=True).wait_for()
+        assert wp.get_by_role('button',name='Adicionar produto',exact=True).count()==0
+        assert wp.get_by_role('button',name='Parceiros',exact=True).count()==0
+        wp.get_by_role('button',name='Armazém e validades',exact=True).click()
+        wp.locator('[data-lot-edit]').first.wait_for()
+        assert wp.get_by_role('button',name='Registar saída',exact=True).count()==2
+        wp.locator('[data-dispose-lot]').first.click()
+        wp.locator('#quantity').fill('0.1');wp.locator('#reason').fill('Embalagem danificada')
+        wp.get_by_role('button',name='Confirmar saída',exact=True).click()
+        wp.get_by_text('Embalagem Danificada',exact=True).wait_for()
+        wc.close()
+        page.get_by_role('button',name='Histórico de vendas',exact=True).click()
+        page.locator('#history-results tbody tr').first.wait_for()
+        page.locator('#history-results [data-receipt]').first.click()
+        page.get_by_role('button',name='Cancelar venda',exact=True).click()
+        page.locator('#reason').fill('Cliente devolveu os produtos')
+        page.get_by_role('button',name='Confirmar cancelamento',exact=True).click()
+        page.locator('#history-results').get_by_text('Cancelada',exact=True).wait_for()
         page.get_by_role('button',name='Visão geral',exact=True).click()
         page.locator('#toast').evaluate("el=>el.className=''")
         page.screenshot(path='/tmp/loja-ui-test/tt-dashboard.png',full_page=True)
@@ -414,7 +493,7 @@ try:
         assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'mobile horizontal overflow'
         assert not errors, errors
         browser.close()
-        print('PASS: own-cash seller history, leadership history filters and mobile layout, custom manager permissions, seller menus in separate session, seller/manager registration, unique leadership UI, incomplete-response handling, live validation, grouped numbers, password visibility/strength, filters, simulated recovery UI, real password reset, multi-product receipt, underpayment down to one cent, electronic excess, cash shortage, pending VAT, rule configuration, product classification, mixed VAT receipt, tax report, required markers and conditional requirements, centered blue registration/login and desktop/mobile layout; no JavaScript errors.')
+        print('PASS: outside-click and Escape preserve modal forms, blue modal headers and red close button, physical registers, private PIN panel, supplier creation, partner filters, lower warehouse access and disposal, immutable cancellation UI, own-cash seller history, leadership history filters and mobile layout, custom manager permissions, seller menus in separate session, seller/manager registration, unique leadership UI, incomplete-response handling, live validation, grouped numbers, password visibility/strength, filters, simulated recovery UI, real password reset, multi-product receipt, underpayment down to one cent, electronic excess, cash shortage, pending VAT, rule configuration, product classification, mixed VAT receipt, tax report, required markers and conditional requirements, centered blue registration/login and desktop/mobile layout; no JavaScript errors.')
 except Exception:
     try:
         print('Browser flow failed; no credentials logged.')
