@@ -16,6 +16,10 @@ test('legacy accounts survive migration, duplicate leadership becomes sellers, r
  INSERT INTO sales VALUES(1,1,1,'2026-10-29 20:00:00','Cliente histórico',10000,1000,9000,10000,1000,'dinheiro');
  CREATE TABLE items(id INTEGER PRIMARY KEY,sale_id INTEGER,product_id INTEGER,name TEXT,unit TEXT,quantity REAL,price INTEGER,total INTEGER);
  INSERT INTO items VALUES(1,1,1,'Produto histórico','un',1,10000,10000);`);
+ legacy.exec(`CREATE TABLE audit(id INTEGER PRIMARY KEY,user_id INTEGER,created TEXT DEFAULT CURRENT_TIMESTAMP,action TEXT NOT NULL,detail TEXT NOT NULL);
+ INSERT INTO audit(user_id,action,detail) VALUES(2,'Segurança','Alterou a sua palavra-passe');
+ INSERT INTO audit(user_id,action,detail) VALUES(3,'Segurança','Alterou a sua palavra-passe');
+ INSERT INTO audit(user_id,action,detail) VALUES(1,'Segurança','Repôs a palavra-passe da conta #3');`);
  legacy.close();
  async function startAndStop(){
   const child=spawn(process.execPath,['server.js'],{env:{...process.env,PORT:'0',HOST:'127.0.0.1',DATA_DIR:dir},stdio:['ignore','pipe','pipe']});
@@ -27,6 +31,7 @@ test('legacy accounts survive migration, duplicate leadership becomes sellers, r
   const db=new DatabaseSync(path);
   try{
    const users=db.prepare('SELECT * FROM users ORDER BY id').all();assert.equal(users.length,5);
+   assert.equal(users[0].must_change_password,1);assert.equal(users[1].must_change_password,0);assert.equal(users[2].must_change_password,1);
    assert.equal(users.filter(u=>u.role==='proprietario').length,1);assert.equal(users[0].role,'proprietario');
    assert.equal(users.filter(u=>u.role==='gerente').length,1);assert.equal(users[3].role,'gerente');
    assert.equal(users[1].role,'vendedor');assert.equal(users[2].role,'vendedor');

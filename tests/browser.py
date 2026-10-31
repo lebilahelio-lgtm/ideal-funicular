@@ -58,6 +58,15 @@ try:
         assert page.locator('#password').get_attribute('type')=='text'
         page.get_by_role('button',name='Ocultar palavra-passe',exact=True).click()
         page.get_by_role('button',name='Iniciar sessão').click()
+        page.get_by_role('heading',name='Crie uma nova palavra-passe',exact=True).wait_for()
+        assert page.locator('.sidebar').count()==0
+        assert 'PRIMEIRO ACESSO' in page.locator('.eyebrow').inner_text()
+        page.reload()
+        page.get_by_role('heading',name='Crie uma nova palavra-passe',exact=True).wait_for()
+        page.locator('#password').fill('PrimeiroAcesso123!')
+        page.locator('#confirmation').fill('PrimeiroAcesso123!')
+        page.get_by_role('button',name='Guardar e entrar na loja').click()
+        initial_password='PrimeiroAcesso123!'
         page.get_by_role('heading',name='Visão geral',exact=True).wait_for()
         page.get_by_role('button',name='Produtos e stock',exact=True).click()
         page.get_by_role('button',name='Adicionar produto').click()
@@ -241,6 +250,10 @@ try:
         seller_page.locator('#identifier').fill('joao@gmail.com')
         seller_page.locator('#password').fill(seller_password)
         seller_page.get_by_role('button',name='Iniciar sessão',exact=True).click()
+        seller_page.get_by_role('heading',name='Crie uma nova palavra-passe',exact=True).wait_for()
+        seller_page.locator('#password').fill('PrimeiroVendedor123!')
+        seller_page.locator('#confirmation').fill('PrimeiroVendedor123!')
+        seller_page.get_by_role('button',name='Guardar e entrar na loja').click()
         seller_page.get_by_role('heading',name='Ponto de venda',exact=True).wait_for()
         for label in ['Produtos e stock','Equipa e permissões','Atividades','Visão geral']:
             assert seller_page.get_by_role('button',name=label,exact=True).count()==0

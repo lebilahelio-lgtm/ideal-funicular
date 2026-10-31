@@ -7,7 +7,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 const dir=mkdtempSync(join(tmpdir(),'loja-test-'));
 let child, base, owner='', seller='';
-async function request(path,data,cookie=owner){const r=await fetch(base+'/api/'+path,{method:data===undefined?'GET':'POST',headers:{'Content-Type':'application/json',...(cookie?{cookie}:{})},body:data===undefined?undefined:JSON.stringify(data)});return {status:r.status,body:await r.json(),cookie:r.headers.get('set-cookie')?.split(';')[0]};}
+async function request(path,data,cookie=owner){const r=await fetch(base+'/api/'+path,{method:data===undefined?'GET':'POST',headers:{'Content-Type':'application/json',...(cookie?{cookie}:{})},body:data===undefined?undefined:JSON.stringify(data)});const result={status:r.status,body:await r.json(),cookie:r.headers.get('set-cookie')?.split(';')[0]};
+ // These business-flow fixtures represent accounts that completed initial onboarding.
+ // The mandatory password transition is exercised without this fixture in first-login.test.js.
+ if(r.ok&&['setup','users','users/reset-password'].includes(path)&&result.body.password){const fixture=new DatabaseSync(join(dir,'loja.sqlite'));fixture.prepare('UPDATE users SET must_change_password=0 WHERE email=?').run(result.body.email);fixture.close();}
+ return result;}
 before(async()=>{
   const net=await import('node:net');const probe=net.createServer();await new Promise((r,j)=>{probe.once('error',j);probe.listen(0,'127.0.0.1',r);});const port=probe.address().port;await new Promise(r=>probe.close(r));base=`http://127.0.0.1:${port}`;
   child=spawn(process.execPath,['server.js'],{env:{...process.env,PORT:String(port),DATA_DIR:dir,HOST:'127.0.0.1'},stdio:['ignore','pipe','pipe']});await new Promise((resolve,reject)=>{child.stdout.once('data',resolve);child.once('exit',code=>reject(Error('Server exited '+code)));setTimeout(()=>reject(Error('Server timeout')),10000).unref();});
