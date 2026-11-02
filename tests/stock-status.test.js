@@ -9,6 +9,7 @@ test('expiry colors respect the Angola day, warning window and end-of-day validi
  assert.equal(expiryStatus('2026-11-01',7,'2026-11-02'),'expired');
  assert.equal(expiryStatus('2027-01-01',7,'2026-12-29'),'warning');
  assert.equal(expiryStatus(null,7,'2026-11-02'),'healthy');
+ assert.equal(expiryStatus('2026-11-03',0,'2026-11-02'),'healthy');assert.equal(expiryStatus('2026-11-02',0,'2026-11-02'),'warning');
 });
 test('product alarm prioritizes expired released lots, ignoring pending and exhausted lots',()=>{
  const healthy={sale_enabled:1,remaining:1000,expires_on:'2026-12-31'},warning={sale_enabled:1,remaining:500,expires_on:'2026-11-05'},expired={sale_enabled:1,remaining:100,expires_on:'2026-11-01'};

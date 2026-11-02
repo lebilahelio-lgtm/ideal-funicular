@@ -168,3 +168,13 @@ Lotes com quantidade zero não aparecem na janela de detalhes nem nas opções d
 Todas as janelas usam um cabeçalho fixo com o X sempre visível. Apenas o corpo tem rolagem, começando abaixo do cabeçalho. A seleção de lote tem largura compacta própria; as outras janelas mantêm o espaço necessário aos seus formulários. A impressão dos recibos conserva o formato existente.
 
 A gaveta não executa operações ao abrir: a compra continua a criar um lote pendente e **Disponibilizar** abre a consulta/escolha dos lotes para decidir quais podem ser vendidos. Pessoas com acesso apenas de consulta veem **Consultar lotes** e não recebem permissões de disponibilização. No telemóvel, a tabela permite deslocamento horizontal para consultar todas as colunas; as ações da gaveta ficam acessíveis na área visível.
+
+### Cadastro sem valores presumidos e apresentação compacta
+
+Os formulários de **Adicionar produto** começam com categoria e embalagem vazias e os campos numéricos a **0**. O conteúdo por embalagem deve ser preenchido com um número positivo antes de guardar. **Tipo de embalagem** é obrigatório: pode escolher Caixa, Fita, Pacote, Saco ou Sesto nas sugestões, ou escrever outro tipo. Valores de produtos existentes são preservados ao editar.
+
+A antecedência do alerta de validade aceita **0 a 3650 dias**; zero significa aviso no próprio dia da expiração. As novas compras também começam com quantidade e custo a zero; a quantidade deve ser preenchida com um valor positivo. Os valores de um formulário em curso são mantidos ao cadastrar um fornecedor e voltar à compra.
+
+No fornecedor/parceiro, apenas **Nome** e **Localização** são obrigatórios e aparecem primeiro, nessa ordem. Telefone e email são opcionais; quando preenchidos, continuam a ser validados. Fornecedores sem contactos podem ser selecionados normalmente nas compras.
+
+A tabela mantém a ordem das seis colunas, com cabeçalho azul, linhas de produtos mais compactas e margem adicional à direita do stock total. Nomes e categorias longos têm apresentação abreviada para manter a altura das linhas, com o texto completo disponível ao passar o rato e no nome acessível. O símbolo TT tem tamanho e destaque maiores na navegação e nos ecrãs de acesso.

@@ -80,6 +80,11 @@ try:
         page.get_by_role('button',name='Adicionar produto').click()
         assert_required_markers(page)
         assert not page.locator('#tax_rule_id').evaluate('(el)=>el.required')
+        assert page.locator('#pack_type').input_value()==''
+        assert page.locator('#pack_type').evaluate('(el)=>el.required')
+        assert not page.locator('#pack_size').evaluate('(el)=>el.checkValidity()')
+        assert page.locator('#packaging-types option').evaluate_all('(els)=>els.map(el=>el.value)')==['Caixa','Fita','Pacote','Saco','Sesto']
+        assert page.locator('#product-form [data-number]').evaluate_all('(els)=>els.every(el=>el.value==="0")')
         page.locator('#name').fill('Arroz Branco')
         page.mouse.click(8,8)
         assert page.locator('#modal').evaluate('(el)=>el.open')
@@ -106,6 +111,7 @@ try:
         page.locator('#barcode').fill('12345')
         page.locator('#pack_type').fill('Saco')
         page.locator('#pack_size').fill('25')
+        page.locator('#expiry_warning_days').fill('7')
         page.locator('#pack_cost').fill('20000')
         page.locator('#price').fill('1000')
         assert page.locator('#price').input_value()=='1 000'
@@ -120,7 +126,11 @@ try:
         open_warehouse_drawer(page,1)
         page.locator('[data-product-drawer="1"] [data-stock]').click()
         assert_required_markers(page)
+        assert page.locator('#packs').input_value()=='0'
+        assert page.locator('#pack_cost').input_value()=='0'
         page.locator('#add-supplier').click()
+        assert page.locator('#partner-form [required]').evaluate_all('(els)=>els.map(el=>el.name)')==['partner_name','partner_location']
+        assert page.locator('#partner-form input').evaluate_all('(els)=>els.map(el=>el.name)')==['partner_name','partner_location','partner_phone','partner_email']
         page.locator('#partner_name').fill('Fornecedor Teste')
         page.locator('#partner_phone').fill('923456789')
         page.locator('#partner_email').fill('compras@fornecedor.ao')
@@ -146,6 +156,8 @@ try:
         page.locator('#modal .modal-close').click()
         page.get_by_role('button',name='Adicionar produto').click()
         page.locator('#name').fill('Sabonete')
+        page.locator('#category').fill('Higiene')
+        page.locator('#pack_type').fill('Caixa')
         page.locator('#product-extra summary').click()
         page.locator('#barcode').fill('67890')
         page.locator('#pack_size').fill('12')
@@ -530,9 +542,24 @@ try:
         page.locator('#partners-results tbody tr').nth(1).wait_for()
         page.locator('#partner_kind').select_option('fornecedor')
         assert page.locator('#partners-results tbody tr').count()==1
+        page.get_by_role('button',name='Adicionar parceiro',exact=True).click()
+        page.locator('#partner_name').fill('Fornecedor Apenas Local')
+        page.locator('#partner_location').fill('Benguela')
+        assert page.locator('#partner_phone').input_value()==''
+        assert page.locator('#partner_email').input_value()==''
+        page.get_by_role('button',name='Guardar parceiro',exact=True).click()
+        page.locator('#modal').wait_for(state='hidden')
+        page.locator('#partners-results').get_by_text('Fornecedor Apenas Local',exact=True).wait_for()
         page.get_by_role('button',name='Armazém',exact=True).click()
         assert page.locator('.warehouse-catalog table').count()==1
         assert page.locator('.warehouse-stock-table thead th').all_inner_texts()==['Nome','Categoria','Indisponível','Disponível','Estado','Stock total']
+        assert page.locator('.warehouse-stock-table th').first.evaluate('el=>getComputedStyle(el).backgroundColor')=='rgb(25, 103, 201)'
+        assert page.locator('[data-catalog-product="1"]').bounding_box()['height']<page.locator('.warehouse-stock-table thead').bounding_box()['height']
+        total_box=page.locator('[data-catalog-product="1"] .quantity-total strong').bounding_box()
+        table_box=page.locator('.warehouse-stock-table').bounding_box()
+        assert table_box['x']+table_box['width']-total_box['x']-total_box['width']>=30
+        assert page.locator('.sidebar .brand-mark').bounding_box()['width']>=60
+        assert page.locator('.sidebar .tt-symbol').evaluate('el=>parseFloat(getComputedStyle(el).fontSize)')>=34
         # Row/cell click and keyboard both toggle one drawer, with actions beneath the row.
         page.locator('[data-catalog-product="1"]').click()
         expect(page.locator('[data-product-drawer="1"]')).to_have_attribute('aria-hidden','false')
@@ -557,6 +584,7 @@ try:
         page.screenshot(path='/tmp/loja-ui-test/armazem.png',full_page=True)
         page.set_viewport_size({'width':390,'height':844})
         assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'warehouse mobile horizontal overflow'
+        assert page.locator('[data-catalog-product="1"]').bounding_box()['height']<page.locator('.warehouse-stock-table thead').bounding_box()['height']
         page.screenshot(path='/tmp/loja-ui-test/armazem-mobile.png',full_page=True)
         open_warehouse_drawer(page,1)
         mobile_action=page.locator('[data-product-drawer="1"] [data-product-details]')
@@ -613,6 +641,7 @@ try:
         before_purchase=page.request.get('http://127.0.0.1:3001/api/state').json()['products'][0]['stock']
         open_warehouse_drawer(page,1)
         page.locator('[data-product-drawer="1"] [data-stock]').click()
+        page.locator('#packs').fill('1')
         page.locator('#supplier_id').select_option('1')
         page.locator('#expires_on').fill('2099-12-31')
         page.get_by_role('button',name='Guardar compra',exact=True).click()
@@ -765,7 +794,7 @@ try:
         assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'mobile horizontal overflow'
         assert not errors, errors
         browser.close()
-        print('PASS: six-column stock table, row drawers by mouse and keyboard with one open at a time, unavailable quantity, green availability action beneath rows, compact lot picker, depleted lots hidden with history preserved, single expiry icon beside available stock, green details button, fixed headers with body-only scrolling on forms and details, warehouse history route/breadcrumb/reload/back with saved filters, green/orange/red expiry alarms, blue total and green/red available stock, real two-lot selection with FIFO suggestion, larger type, simplified global warehouse, required purchase/expiry dates, new lots pending even on released products, on-demand product details, per-lot availability controls, warehouse movement filters, warehouse desktop/mobile layout, outside-click and Escape preserve modal forms, blue modal headers and red close button, physical registers, private PIN panel, supplier creation, partner filters, lower warehouse access and disposal, immutable cancellation UI, own-cash seller history, leadership history filters and mobile layout, custom manager permissions, seller menus in separate session, seller/manager registration, unique leadership UI, incomplete-response handling, live validation, grouped numbers, password visibility/strength, filters, simulated recovery UI, real password reset, multi-product receipt, underpayment down to one cent, electronic excess, cash shortage, pending VAT, rule configuration, product classification, mixed VAT receipt, tax report, required markers and conditional requirements, centered blue registration/login and desktop/mobile layout; no JavaScript errors.')
+        print('PASS: zero numeric defaults, required free-text packaging with suggestions, supplier required name/location only in order, blue header and shorter body rows, stronger TT branding, six-column stock table, row drawers by mouse and keyboard with one open at a time, unavailable quantity, green availability action beneath rows, compact lot picker, depleted lots hidden with history preserved, single expiry icon beside available stock, green details button, fixed headers with body-only scrolling on forms and details, warehouse history route/breadcrumb/reload/back with saved filters, green/orange/red expiry alarms, blue total and green/red available stock, real two-lot selection with FIFO suggestion, larger type, simplified global warehouse, required purchase/expiry dates, new lots pending even on released products, on-demand product details, per-lot availability controls, warehouse movement filters, warehouse desktop/mobile layout, outside-click and Escape preserve modal forms, blue modal headers and red close button, physical registers, private PIN panel, supplier creation, partner filters, lower warehouse access and disposal, immutable cancellation UI, own-cash seller history, leadership history filters and mobile layout, custom manager permissions, seller menus in separate session, seller/manager registration, unique leadership UI, incomplete-response handling, live validation, grouped numbers, password visibility/strength, filters, simulated recovery UI, real password reset, multi-product receipt, underpayment down to one cent, electronic excess, cash shortage, pending VAT, rule configuration, product classification, mixed VAT receipt, tax report, required markers and conditional requirements, centered blue registration/login and desktop/mobile layout; no JavaScript errors.')
 except Exception:
     try:
         print('Browser flow failed; no credentials logged.')

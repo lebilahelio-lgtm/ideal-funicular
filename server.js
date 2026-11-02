@@ -261,7 +261,7 @@ async function api(req, res, path, body) {
       if(body.sale_enabled!==undefined)fail('A disponibilidade é definida por lote, depois de guardar a compra.');
       if(body.expiry_required!==undefined&&typeof body.expiry_required!=='boolean')fail('Indique se o produto tem validade.');
       const expiryRequired=body.expiry_required===undefined?(body.id?one('SELECT expiry_required FROM products WHERE id=?',id).expiry_required:0):Number(body.expiry_required===true);
-      const warning=body.expiry_warning_days??(body.id?one('SELECT expiry_warning_days FROM products WHERE id=?',id).expiry_warning_days:7);if(!Number.isInteger(warning)||warning<1||warning>3650)fail('O alerta de validade deve estar entre 1 e 3650 dias.');
+      const warning=body.expiry_warning_days??(body.id?one('SELECT expiry_warning_days FROM products WHERE id=?',id).expiry_warning_days:0);if(!Number.isInteger(warning)||warning<0||warning>3650)fail('O alerta de validade deve estar entre 0 e 3650 dias.');
       run('UPDATE products SET tax_rule_id=?,expiry_required=?,expiry_warning_days=? WHERE id=?',taxRule,expiryRequired,warning,id);
       audit(user,'Produto',`${body.id ? 'Atualizou' : 'Criou'} ${name}`); return {id};
     });

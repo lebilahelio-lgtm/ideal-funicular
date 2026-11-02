@@ -5,7 +5,7 @@
 1. O proprietário entra em **Caixa → Definir balcões** e define entre 1 e 100 balcões físicos. Um balcão ocupado precisa de ser fechado antes de ser desativado. A desativação conserva todos os turnos anteriores.
 2. Em **Equipa e permissões**, cadastra o gerente, atendentes, responsáveis de caixa, responsáveis de armazém e colaboradores de armazém. Em **Acesso**, escolhe as autorizações concretas. O proprietário mantém todas as responsabilidades sem precisar de outra conta; o gerente pode acumular funções de caixa e de armazém se o proprietário as autorizar.
 3. Cada pessoa consulta **A minha conta → Código pessoal de caixa**. Para abrir um turno, escolhe um balcão livre, preenche o fundo inicial e introduz os quatro algarismos nos quadrados. O balcão fica ocupado por essa pessoa até ao fecho; nem uma segunda pessoa no mesmo balcão nem dois turnos simultâneos da mesma pessoa são permitidos.
-4. O proprietário cadastra os parceiros ou delega consulta/edição ao gerente. O pessoal autorizado do armazém vê apenas os nomes dos fornecedores na seleção e pode usar **+ Fornecedor** para registar um novo com nome, telefone, email e localização. Não recebe a lista dos contactos completos.
+4. O proprietário cadastra os parceiros ou delega consulta/edição ao gerente. O pessoal autorizado do armazém vê apenas os nomes dos fornecedores na seleção e pode usar **+ Fornecedor** para registar um novo com nome e localização obrigatórios, seguidos de telefone e email opcionais. Não recebe a lista dos contactos completos.
 5. O responsável do armazém define os produtos e os dados fixos. No stock global do produto, o colaborador autorizado usa **Nova compra** para registar fornecedor, quantidade, custo, data de compra e data de expiração. Cada compra cria um lote indisponível; a disponibilização é uma decisão posterior, na opção **Disponibilizar** desse produto, abrindo o lote.
 
 ## Perfis e acumulação de funções
@@ -78,3 +78,9 @@ Com dois ou mais lotes vendáveis, clicar no produto no caixa abre uma escolha c
 **Disponibilizar** tem botão verde na gaveta da linha e mostra só lotes com quantidade positiva. Os lotes esgotados permanecem nos registos e no histórico, mas não ocupam a lista operacional. A escolha de lote no ponto de venda é uma janela pequena, com o mais antigo sugerido e apenas as informações necessárias para selecionar.
 
 Em todas as janelas, o cabeçalho e o X ficam fora da área de rolagem. Só o conteúdo abaixo do cabeçalho rola, incluindo formulários longos e listas com muitos lotes.
+
+## Preenchimento dos cadastros
+
+Novos produtos e novas compras não recebem quantidades nem custos presumidos: os campos numéricos começam a zero e o conteúdo da embalagem/quantidade comprada precisam de valor positivo. A embalagem começa vazia, é obrigatória e aceita sugestões ou escrita livre. A antecedência de validade zero avisa no dia da expiração. Ao editar, os dados já guardados continuam preenchidos.
+
+Fornecedores exigem apenas nome e localização, apresentados primeiro. Contactos são opcionais, sem dispensar validação quando fornecidos. A tabela de stock usa cabeçalho azul, linhas inferiores mais baixas e alinhamento uniforme, com maior margem na coluna de stock total.
