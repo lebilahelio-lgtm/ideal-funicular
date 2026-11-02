@@ -47,6 +47,24 @@ test('dated purchases always create pending lots; release and FIFO are per lot; 
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM lots').get().n,count);assert.equal(db.prepare('SELECT initial FROM lots WHERE id=?').get(older.body.id).initial,initial);assert.equal(db.prepare('SELECT remaining FROM lots WHERE id=?').get(older.body.id).remaining,2000);
   const movement=db.prepare("SELECT * FROM movements WHERE kind='devolucao' AND lot_id=?").get(older.body.id);assert.equal(movement.quantity,1);assert.match(movement.reason,/Cliente Devolveu/);assert.equal(movement.sale_id,nextSale.body.id);
   assert.equal((await api('warehouse/return',{sale_id:nextSale.body.id,lot_id:older.body.id,reason:'Repetido'})).status,409);
+  // Selected lots are honored exactly, without silently falling back to older stock.
+  const offered=(await api('sales/lots/'+id,undefined,seller)).body.lots;assert.deepEqual(offered.map(l=>l.id),[older.body.id,newer.body.id]);assert.ok(offered.every(l=>!Object.hasOwn(l,'purchase_cost')&&!Object.hasOwn(l,'supplier_id')));
+  const oldRemaining=db.prepare('SELECT remaining FROM lots WHERE id=?').get(older.body.id).remaining;
+  const chosen=await api('sales',{...basket,items:[{product_id:id,lot_id:newer.body.id,quantity:0.5}],paid:50});assert.equal(chosen.status,200);assert.equal(chosen.body.items[0].lots[0].lot_id,newer.body.id);assert.equal(db.prepare('SELECT remaining FROM lots WHERE id=?').get(older.body.id).remaining,oldRemaining);
+  const salesBefore=db.prepare('SELECT COUNT(*) AS n FROM sales').get().n;
+  assert.equal((await api('sales',{...basket,items:[{product_id:id,lot_id:newer.body.id,quantity:1}]})).status,400);assert.equal(db.prepare('SELECT COUNT(*) AS n FROM sales').get().n,salesBefore);
+  const mixed=await api('sales',{...basket,items:[{product_id:id,lot_id:older.body.id,quantity:0.25},{product_id:id,lot_id:newer.body.id,quantity:0.25}],paid:50});assert.equal(mixed.status,200);assert.equal(mixed.body.items.length,2);assert.deepEqual(mixed.body.items.flatMap(i=>i.lots.map(l=>l.lot_id)).sort(),[older.body.id,newer.body.id].sort());
+  assert.equal((await api('sales',{...basket,items:[{product_id:id,lot_id:older.body.id,quantity:0.25},{product_id:id,lot_id:older.body.id,quantity:0.25}],paid:50})).status,400);
+  assert.equal((await api('sales',{...basket,items:[{product_id:id,lot_id:pending.body.id,quantity:1}]})).status,409);
+  assert.equal((await api('sales',{...basket,items:[{product_id:id,lot_id:'1',quantity:1}]})).status,400);
+  const other=await api('products',{...product,name:'Feijão'});assert.equal((await api('sales',{...basket,items:[{product_id:other.body.id,lot_id:newer.body.id,quantity:0.25}],paid:25})).status,409);
+  // A released lot can pass from orange to red without masking other valid stock.
+  const dateOffset=n=>new Date(Date.now()+3600000+n*86400000).toISOString().slice(0,10);
+  await api('lots/update',{id:older.body.id,supplier_id:supplier.body.id,expires_on:dateOffset(1)});assert.equal((await api('state')).body.products.find(p=>p.id===id).expiry_status,'warning');
+  await api('lots/update',{id:older.body.id,supplier_id:supplier.body.id,expires_on:dateOffset(-1)});const red=(await api('state')).body.products.find(p=>p.id===id);assert.equal(red.expiry_status,'expired');assert.ok(red.stock>0);
+  assert.ok(!(await api('sales/lots/'+id)).body.lots.some(l=>l.id===older.body.id));assert.equal((await api('sales',{...basket,items:[{product_id:id,lot_id:older.body.id,quantity:0.25}],paid:25})).status,409);
+  await api('lots/availability',{id:older.body.id,enabled:false});assert.equal((await api('state')).body.products.find(p=>p.id===id).expiry_status,'healthy');
+  await api('lots/availability',{id:newer.body.id,enabled:false});assert.equal((await api('sales',{...basket,items:[{product_id:id,lot_id:newer.body.id,quantity:0.1}],paid:10})).status,409);assert.equal((await api('state')).body.products.find(p=>p.id===id).expiry_status,'pending');
   // Historical purchases may already have expired; they remain physical stock and can never be released.
   const expired=await api('stock',{...purchase,purchased_on:'2020-01-01',expires_on:'2020-02-01'});assert.equal(expired.status,200);assert.equal((await api('lots/availability',{id:expired.body.id,enabled:true})).status,400);
   assert.equal((await api('warehouse/products/'+id,undefined,seller)).body.lots.length,0);

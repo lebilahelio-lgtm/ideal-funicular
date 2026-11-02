@@ -2,6 +2,7 @@ import {randomBytes,randomInt,createCipheriv,createDecipheriv,createHmac,timingS
 import {existsSync,readFileSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {descriptiveText} from './public/validation.js';
+import {expiryStatus,productExpiryStatus} from './public/stock-status.js';
 import {fiscalDate} from './fiscal.js';
 const day=()=>new Date(Date.now()+3600000).toISOString().slice(0,10);
 const error=(message,status=400)=>Object.assign(new Error(message),{status});
@@ -94,11 +95,11 @@ export function operations(db,dir,audit){
  }
  function lots(productId=null,includeEmpty=false){
   const clauses=[],args=[];if(!includeEmpty)clauses.push('l.remaining>0');if(productId!==null){clauses.push('l.product_id=?');args.push(recordId(productId,'Produto'));}
-  return all(`SELECT l.*,p.name AS product,p.unit,p.expiry_warning_days,p.expiry_required,v.name AS supplier${includeEmpty?",(SELECT SUM(cost) FROM movements m WHERE m.lot_id=l.id AND m.kind='entrada') AS purchase_cost":''} FROM lots l JOIN products p ON p.id=l.product_id LEFT JOIN partners v ON v.id=l.supplier_id ${clauses.length?'WHERE '+clauses.join(' AND '):''} ORDER BY COALESCE(l.purchased_on,date(l.received,'+1 hour')),l.received,l.id`,...args).map(l=>({...l,quantity:l.remaining/1000,expired:!!l.expires_on&&l.expires_on<day(),warning:!!l.expires_on&&l.expires_on<=new Date(Date.parse(day())+l.expiry_warning_days*86400000).toISOString().slice(0,10),unknown:!!l.legacy&&!l.expires_on}));
+  return all(`SELECT l.*,p.name AS product,p.unit,p.expiry_warning_days,p.expiry_required,v.name AS supplier${includeEmpty?",(SELECT SUM(cost) FROM movements m WHERE m.lot_id=l.id AND m.kind='entrada') AS purchase_cost":''} FROM lots l JOIN products p ON p.id=l.product_id LEFT JOIN partners v ON v.id=l.supplier_id ${clauses.length?'WHERE '+clauses.join(' AND '):''} ORDER BY COALESCE(l.purchased_on,date(l.received,'+1 hour')),l.received,l.id`,...args).map(l=>({...l,expiry_status:expiryStatus(l.expires_on,l.expiry_warning_days,day()),quantity:l.remaining/1000,expired:!!l.expires_on&&l.expires_on<day(),warning:!!l.expires_on&&l.expires_on<=new Date(Date.parse(day())+l.expiry_warning_days*86400000).toISOString().slice(0,10),unknown:!!l.legacy&&!l.expires_on}));
  }
  function productDetails(id,user){
   id=recordId(id,'Produto');const p=one('SELECT * FROM products WHERE id=? AND active=1',id);if(!p)throw error('Produto inexistente.',404);
-  delete p.sale_enabled;p.physical_stock=p.stock;p.stock=available(id);
+  delete p.sale_enabled;p.physical_stock=p.stock;p.stock=available(id);p.expiry_status=stockHealth(id);
   if(!user.permissions.stock_edit&&!user.permissions.stock_entry)delete p.pack_cost;
   const details=user.permissions.warehouse||user.permissions.stock_entry?lots(id,true):[];
   if(!user.permissions.stock_edit&&!user.permissions.stock_entry)for(const lot of details)delete lot.purchase_cost;
@@ -115,8 +116,26 @@ export function operations(db,dir,audit){
  }
  function dispose(body,user){const quantity=units(body.quantity),reason=descriptiveText(text(body.reason,'Motivo')),kind=body.kind;if(!['desperdicio','expirado','outra_saida'].includes(kind))throw error('Tipo de saída inválido.');return tx(()=>{const lot=one('SELECT l.*,p.unit,p.name FROM lots l JOIN products p ON p.id=l.product_id WHERE l.id=?',recordId(body.lot_id,'Lote'));if(!lot)throw error('Lote inexistente.',404);if(quantity>lot.remaining)throw error('Quantidade insuficiente neste lote.');if(lot.unit==='un'&&quantity%1000)throw error('Use unidades inteiras.');if(kind==='expirado'&&(!lot.expires_on||lot.expires_on>=day()))throw error('O lote ainda não expirou.');run('UPDATE lots SET remaining=remaining-? WHERE id=?',quantity,lot.id);run('UPDATE products SET stock=ROUND(stock-?,3) WHERE id=?',quantity/1000,lot.product_id);run('INSERT INTO movements(product_id,user_id,quantity,cost,reason,lot_id,kind) VALUES(?,?,?,0,?,?,?)',lot.product_id,user.id,-quantity/1000,reason,lot.id,kind);audit(user,'Saída de armazém',`${kind}: ${lot.name}, lote #${lot.id}, ${quantity/1000} ${lot.unit}; motivo: ${reason}`);return {ok:true};});}
  function available(id){return (one('SELECT COALESCE(SUM(remaining),0) AS n FROM lots WHERE product_id=? AND sale_enabled=1 AND (expires_on>=? OR (expires_on IS NULL AND EXISTS(SELECT 1 FROM products p WHERE p.id=lots.product_id AND p.expiry_required=0)))',id,day()).n)/1000;}
- // Called within the sale transaction. FIFO among lots safe for sale.
- function allocate(itemId,product,quantity,user,saleId){let left=units(quantity);for(const lot of all(`SELECT * FROM lots WHERE product_id=? AND sale_enabled=1 AND remaining>0 AND (expires_on>=? OR (expires_on IS NULL AND EXISTS(SELECT 1 FROM products p WHERE p.id=lots.product_id AND p.expiry_required=0))) ORDER BY COALESCE(purchased_on,date(received,'+1 hour')),received,id`,product,day())){const take=Math.min(left,lot.remaining);run('UPDATE lots SET remaining=remaining-? WHERE id=?',take,lot.id);run('INSERT INTO allocations(item_id,lot_id,quantity,expires_on_snapshot) VALUES(?,?,?,?)',itemId,lot.id,take,lot.expires_on);run("INSERT INTO movements(product_id,user_id,quantity,cost,reason,lot_id,kind,sale_id) VALUES(?,?,?,0,?,?,'venda',?)",product,user.id,-take/1000,`Venda - recibo #${saleId}`,lot.id,saleId);left-=take;if(!left)break;}if(left)throw error('Stock vendável insuficiente. Existem lotes expirados ou o stock mudou.',409);}
+ function stockHealth(id){
+  const p=one('SELECT expiry_warning_days FROM products WHERE id=?',id);
+  return productExpiryStatus(all('SELECT sale_enabled,remaining,expires_on FROM lots WHERE product_id=?',id),p.expiry_warning_days,day());
+ }
+ function saleLots(productId=null){
+  const args=[day()];let filter='';if(productId!==null){filter=' AND l.product_id=?';args.push(recordId(productId,'Produto'));}
+  return all(`SELECT l.id,l.product_id,l.purchased_on,l.received,l.expires_on,l.remaining/1000.0 AS quantity,p.expiry_warning_days FROM lots l JOIN products p ON p.id=l.product_id WHERE p.active=1 AND l.sale_enabled=1 AND l.remaining>0 AND (l.expires_on>=? OR (l.expires_on IS NULL AND p.expiry_required=0))${filter} ORDER BY COALESCE(l.purchased_on,date(l.received,'+1 hour')),l.received,l.id`,...args).map(l=>({...l,expiry_status:expiryStatus(l.expires_on,l.expiry_warning_days,day())}));
+ }
+ // Explicit selection consumes only that lot. Clients without a selection use FIFO.
+ function allocate(itemId,product,quantity,user,saleId,selectedLot=null){
+  let left=units(quantity);const args=[product,day()];if(selectedLot!==null)args.push(recordId(selectedLot,'Lote'));
+  const lots=all(`SELECT * FROM lots WHERE product_id=? AND sale_enabled=1 AND remaining>0 AND (expires_on>=? OR (expires_on IS NULL AND EXISTS(SELECT 1 FROM products p WHERE p.id=lots.product_id AND p.expiry_required=0))) ${selectedLot===null?'':'AND id=?'} ORDER BY COALESCE(purchased_on,date(received,'+1 hour')),received,id`,...args);
+  for(const lot of lots){const take=Math.min(left,lot.remaining);
+   run('UPDATE lots SET remaining=remaining-? WHERE id=?',take,lot.id);
+   run('INSERT INTO allocations(item_id,lot_id,quantity,expires_on_snapshot) VALUES(?,?,?,?)',itemId,lot.id,take,lot.expires_on);
+   run("INSERT INTO movements(product_id,user_id,quantity,cost,reason,lot_id,kind,sale_id) VALUES(?,?,?,0,?,?,'venda',?)",product,user.id,-take/1000,`Venda - recibo #${saleId}`,lot.id,saleId);
+   left-=take;if(!left)break;
+  }
+  if(left)throw error('O lote ou o stock mudou. Atualize a venda e confirme o lote e a quantidade.',409);
+ }
  function cancel(body,user){const reason=descriptiveText(text(body.reason,body.lot_id!==undefined?'Motivo da devolução':'Motivo do cancelamento'));return tx(()=>{const sale=one('SELECT s.*,sh.closed FROM sales s JOIN shifts sh ON sh.id=s.shift_id WHERE s.id=?',body.id);if(!sale)throw error('Venda inexistente.',404);if(body.lot_id!==undefined&&!one('SELECT a.lot_id FROM allocations a JOIN items i ON i.id=a.item_id WHERE i.sale_id=? AND a.lot_id=?',sale.id,recordId(body.lot_id,'Lote')))throw error('O recibo não contém produtos deste lote.');if(one('SELECT sale_id FROM sale_cancellations WHERE sale_id=?',sale.id))throw error('Esta venda já foi cancelada.',409);let refund=null;if(sale.method==='dinheiro'){refund=sale.closed?one('SELECT id FROM shifts WHERE user_id=? AND closed IS NULL',user.id):{id:sale.shift_id};if(!refund)throw error('Abra um caixa seu para registar o reembolso de uma venda de turno já fechado.');const sh=one('SELECT opening FROM shifts WHERE id=?',refund.id);if(sh.opening+cashNet(refund.id)<sale.total)throw error('Dinheiro insuficiente no caixa escolhido para reembolsar a venda.');}
  run('INSERT INTO sale_cancellations(sale_id,actor_id,reason,refund_shift_id,cash_refund) VALUES(?,?,?,?,?)',sale.id,user.id,reason,refund?.id??null,sale.method==='dinheiro'?sale.total:0);
  for(const item of all('SELECT * FROM items WHERE sale_id=?',sale.id)){const allocations=all('SELECT * FROM allocations WHERE item_id=?',item.id);if(allocations.length){for(const a of allocations){run('UPDATE lots SET remaining=remaining+? WHERE id=?',a.quantity,a.lot_id);run("INSERT INTO movements(product_id,user_id,quantity,cost,reason,lot_id,kind,sale_id) VALUES(?,?,?,0,?,?,'devolucao',?)",item.product_id,user.id,a.quantity/1000,`Cancelamento do recibo #${sale.id}: ${reason}`,a.lot_id,sale.id);}}else {const lot=Number(run('INSERT INTO lots(product_id,initial,remaining,legacy) VALUES(?,?,?,1)',item.product_id,Math.round(item.quantity*1000),Math.round(item.quantity*1000)).lastInsertRowid);run("INSERT INTO movements(product_id,user_id,quantity,cost,reason,lot_id,kind,sale_id) VALUES(?,?,?,0,?,?,'devolucao',?)",item.product_id,user.id,item.quantity,`Cancelamento do recibo #${sale.id}: ${reason}`,lot,sale.id);}run('UPDATE products SET stock=ROUND(stock+?,3) WHERE id=?',item.quantity,item.product_id);}
@@ -145,5 +164,5 @@ export function operations(db,dir,audit){
   return {movements,count,page:current,pages,page_size:50};
  }
  function cashNet(id){return one("SELECT COALESCE((SELECT SUM(total) FROM sales WHERE shift_id=? AND method='dinheiro'),0)-COALESCE((SELECT SUM(cash_refund) FROM sale_cancellations WHERE refund_shift_id=?),0) AS n",id,id).n;}
- return {history,productDetails,setAvailability,registers,configureRegisters,pinFor,checkPin,allPins:()=>{refreshPins();return all('SELECT u.id,u.name,p.cipher,p.expires_at FROM users u JOIN cash_pins p ON p.user_id=u.id WHERE u.active=1 AND u.deleted_at IS NULL').map(u=>({id:u.id,name:u.name,code:decrypt(u.cipher),expires_at:u.expires_at}));},suppliers,partner,partners:()=>all('SELECT * FROM partners ORDER BY name'),receive,lots,updateLot,dispose,available,allocate,cancel,cashNet};
+ return {stockHealth,saleLots,history,productDetails,setAvailability,registers,configureRegisters,pinFor,checkPin,allPins:()=>{refreshPins();return all('SELECT u.id,u.name,p.cipher,p.expires_at FROM users u JOIN cash_pins p ON p.user_id=u.id WHERE u.active=1 AND u.deleted_at IS NULL').map(u=>({id:u.id,name:u.name,code:decrypt(u.cipher),expires_at:u.expires_at}));},suppliers,partner,partners:()=>all('SELECT * FROM partners ORDER BY name'),receive,lots,updateLot,dispose,available,allocate,cancel,cashNet};
 }
