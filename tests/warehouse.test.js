@@ -28,7 +28,7 @@ test('warehouse releases stock, sells FIFO atomically, records every movement an
  const productBody={name:'Óleo',category:'Alimentares',unit:'kg',pack_type:'Saco',pack_size:1,pack_cost:50,price:114,minimum:1,expiry_required:true};
  const product=await request('products',productBody);assert.equal(product.status,200);const id=product.body.id;
  const future=n=>new Date(Date.now()+n*86400000).toISOString().slice(0,10);
- const entry={product_id:id,packs:1,supplier_id:supplier.body.id,reason:'Compra inicial'};
+ const entry={purchased_on:'2000-01-01',product_id:id,packs:1,supplier_id:supplier.body.id,reason:'Compra inicial'};
  const first=await request('stock',{...entry,expires_on:future(90)}),second=await request('stock',{...entry,expires_on:future(10)});assert.equal(first.status,200);assert.equal(second.status,200);
  const fixture=new DatabaseSync(join(dir,'loja.sqlite'));fixture.prepare("UPDATE lots SET received='2020-01-01 10:00:00' WHERE id=?").run(first.body.id);
  assert.equal((await request('state')).body.sale_products.length,0);
@@ -36,12 +36,12 @@ test('warehouse releases stock, sells FIFO atomically, records every movement an
  const saleBody={items:[{product_id:id,quantity:1.5}],discount:0,paid:171,method:'dinheiro'};
  const before=fixture.prepare('SELECT COUNT(*) AS n FROM movements').get().n;
  assert.equal((await request('sales',saleBody)).status,400);assert.equal(fixture.prepare('SELECT COUNT(*) AS n FROM movements').get().n,before);
- assert.equal((await request('products/availability',{id,enabled:true},staffCookie)).status,403);
- assert.equal((await request('products/availability',{id,enabled:'true'})).status,400);
- assert.equal((await request('products/availability',{enabled:true})).status,400);
+ assert.equal((await request('lots/availability',{id:first.body.id,enabled:true},staffCookie)).status,403);
+ assert.equal((await request('lots/availability',{id:first.body.id,enabled:'true'})).status,400);
+ assert.equal((await request('lots/availability',{enabled:true})).status,400);
  for(const items of [[null],[{}],[{product_id:String(id),quantity:1}]])assert.equal((await request('sales',{...saleBody,items})).status,400);
  assert.equal((await request('warehouse/dispose',{quantity:1,kind:'desperdicio',reason:'Teste'})).status,400);
- assert.equal((await request('products/availability',{id,enabled:true})).status,200);assert.equal((await request('state')).body.sale_products[0].id,id);
+ assert.equal((await request('lots/availability',{id:first.body.id,enabled:true})).status,200);assert.equal((await request('lots/availability',{id:second.body.id,enabled:true})).status,200);assert.equal((await request('state')).body.sale_products[0].id,id);
  const rule=await request('fiscal/rules',{name:'IVA teste',kind:'tributado',rate:14,start_date:'2000-01-01',legal_basis:'Teste automatizado',active:true});
  await request('products/tax',{ids:[id],tax_rule_id:rule.body.id});
  assert.equal((await request('fiscal/settings',{enabled:true,regime:'geral',price_mode:'included',company_nif:'123456789',company_address:'Luanda',legal_basis:'Teste automatizado',confirmed:true})).status,200);
@@ -67,7 +67,7 @@ test('warehouse releases stock, sells FIFO atomically, records every movement an
  assert.equal((await request('lots/update',{id:second.body.id,supplier_id:supplier.body.id,expires_on:'2000-01-01'})).status,200);
  assert.equal((await request('warehouse/dispose',{lot_id:second.body.id,quantity:1,kind:'expirado',reason:'Prazo terminado'})).status,200);
  const stock=(await request('state')).body.products[0];assert.equal(stock.stock,0.75);assert.equal(stock.physical_stock,0.75);
- assert.equal((await request('products/availability',{id,enabled:false})).status,200);assert.equal((await request('state')).body.sale_products.length,0);assert.equal((await request('sales',{...saleBody,items:[{product_id:id,quantity:0.25}],paid:28.5,expected_fiscal_revision:revision})).status,400);
+ assert.equal((await request('lots/availability',{id:first.body.id,enabled:false})).status,200);assert.equal((await request('state')).body.sale_products.length,0);assert.equal((await request('sales',{...saleBody,items:[{product_id:id,quantity:0.25}],paid:28.5,expected_fiscal_revision:revision})).status,400);
  assert.equal((await request('warehouse/dispose',{lot_id:first.body.id,quantity:0.25,kind:'outra_saida',reason:'Amostra para controlo'})).status,200);
  // Filters are applied before pagination and accept Angola dates.
  assert.equal((await request('warehouse/history',{q:'oleo'})).body.count,(await request('warehouse/history',{product_id:id})).body.count);
@@ -78,7 +78,7 @@ test('warehouse releases stock, sells FIFO atomically, records every movement an
  const reader=(await request('login',{identifier:'staff@gmail.com',password:'SenhaPessoal123!'})).cookie;
  const readOnly=await request('warehouse/history',{},reader);assert.equal(readOnly.status,200);assert.ok(readOnly.body.movements.every(m=>!Object.hasOwn(m,'cost')));
  assert.ok((await request('state',undefined,reader)).body.products.every(p=>!Object.hasOwn(p,'pack_cost')));
- assert.equal((await request('products/availability',{id,enabled:true},reader)).status,403);
+ assert.equal((await request('lots/availability',{id:first.body.id,enabled:true},reader)).status,403);
  for(let i=0;i<55;i++)assert.equal((await request('stock',{...entry,expires_on:future(90),reason:`Compra de teste ${i}`})).status,200);
  const page1=await request('warehouse/history',{kind:'entrada',product_id:id}),page2=await request('warehouse/history',{kind:'entrada',product_id:id,page:2});assert.equal(page1.body.count,57);assert.equal(page1.body.movements.length,50);assert.equal(page2.body.movements.length,7);assert.ok(!page1.body.movements.some(m=>page2.body.movements.some(n=>n.id===m.id)));
  assert.equal(fixture.prepare('SELECT stock FROM products WHERE id=?').get(id).stock,fixture.prepare('SELECT SUM(remaining)/1000.0 AS n FROM lots WHERE product_id=?').get(id).n);

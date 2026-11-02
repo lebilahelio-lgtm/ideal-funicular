@@ -8,12 +8,15 @@ import { join } from 'node:path';
 const dir=mkdtempSync(join(tmpdir(),'loja-test-'));
 let child, base, owner='', seller='';
 async function request(path,data,cookie=owner){
+ // These established sales fixtures explicitly complete purchase and lot release.
+ if(path==='stock'&&data)data={purchased_on:'2000-01-01',expires_on:'2099-12-31',...data};
  if(path==='stock'&&data&&!data.supplier_id){const fixture=new DatabaseSync(join(dir,'loja.sqlite'));fixture.exec("INSERT OR IGNORE INTO partners(id,name,kind,phone,email,location) VALUES(1,'Fornecedor de Teste','fornecedor','923456789','teste@example.com','Luanda')");fixture.close();data={...data,supplier_id:1};}
  if(path==='shifts/open'&&data){const fixture=new DatabaseSync(join(dir,'loja.sqlite'));for(let n=1;n<=10;n++)fixture.prepare('INSERT OR IGNORE INTO registers(number,name) VALUES(?,?)').run(n,'Balcão '+n);fixture.close();const pins=await request('account/pin',undefined,cookie),registers=await request('registers',undefined,cookie);data={...data,pin:pins.body.code,register_id:registers.body.registers?.find(r=>!r.shift_id)?.id};}
 const r=await fetch(base+'/api/'+path,{method:data===undefined?'GET':'POST',headers:{'Content-Type':'application/json',...(cookie?{cookie}:{})},body:data===undefined?undefined:JSON.stringify(data)});const result={status:r.status,body:await r.json(),cookie:r.headers.get('set-cookie')?.split(';')[0]};
  // These business-flow fixtures represent accounts that completed initial onboarding.
  // The mandatory password transition is exercised without this fixture in first-login.test.js.
  if(r.ok&&['setup','users','users/reset-password'].includes(path)&&result.body.password){const fixture=new DatabaseSync(join(dir,'loja.sqlite'));fixture.prepare('UPDATE users SET must_change_password=0 WHERE email=?').run(result.body.email);fixture.close();}
+ if(r.ok&&path==='stock'){assert.equal((await request('lots/availability',{id:result.body.id,enabled:true},owner)).status,200);}
  return result;}
 before(async()=>{
   const net=await import('node:net');const probe=net.createServer();await new Promise((r,j)=>{probe.once('error',j);probe.listen(0,'127.0.0.1',r);});const port=probe.address().port;await new Promise(r=>probe.close(r));base=`http://127.0.0.1:${port}`;
@@ -36,7 +39,7 @@ test('complete shop workflow, atomic stock, permissions and cash reconciliation'
   owner=(await request('login',{identifier:'ANA@GMAIL.COM',password:setup.body.password})).cookie;
   assert.ok(owner);
   assert.equal((await request('login',{identifier:admin.bi,password:'incorrect'})).status,401);
-  const product=(await request('products',{name:'Arroz',category:'Alimentares',unit:'kg',barcode:'12345',minimum:5,pack_type:'Saco',pack_size:25,pack_cost:20000,price:1000,sale_enabled:true})).body;
+  const product=(await request('products',{name:'Arroz',category:'Alimentares',unit:'kg',barcode:'12345',minimum:5,pack_type:'Saco',pack_size:25,pack_cost:20000,price:1000})).body;
   assert.ok(product.id);
   for(const name of ['Arroz 1234','Arroz!','Arroz-Integral'])assert.equal((await request('products',{name})).status,400);
   assert.equal((await request('stock',{product_id:product.id,packs:2,reason:'Compra inicial'})).status,200);
@@ -154,7 +157,7 @@ test('complete shop workflow, atomic stock, permissions and cash reconciliation'
   assert.equal((await request('state')).body.shifts.length,50);
   database.close();
   // A single receipt includes multiple products; underpayment changes neither stock nor history.
-  const oil=await request('products',{name:'Óleo',category:'Alimentares',unit:'L',barcode:'54321',minimum:2,pack_type:'Caixa',pack_size:6,pack_cost:2000,price:500,sale_enabled:true});
+  const oil=await request('products',{name:'Óleo',category:'Alimentares',unit:'L',barcode:'54321',minimum:2,pack_type:'Caixa',pack_size:6,pack_cost:2000,price:500});
   assert.equal(oil.status,200);assert.equal((await request('stock',{product_id:oil.body.id,packs:2,reason:'Compra de óleo'})).status,200);
   const basket={items:[{product_id:product.id,quantity:1.25},{product_id:oil.body.id,quantity:2}],discount:250,paid:1800,method:'dinheiro'};
   const prior=(await request('state')).body;

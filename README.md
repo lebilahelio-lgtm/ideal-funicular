@@ -9,7 +9,7 @@ cd /workspace/ideal-funicular
 npm start
 ```
 
-Porta padrão: `3000`. No primeiro acesso, cadastre o proprietário com nome, BI, data de nascimento, telefone e email. Guarde a palavra-passe gerada, mostrada uma única vez, e entre com email ou BI. Depois cadastre produtos e utilizadores, registe entradas de stock, abra o caixa e comece a vender.
+Porta padrão: `3000`. No primeiro acesso, cadastre o proprietário com nome, BI, data de nascimento, telefone e email. Guarde a palavra-passe gerada, mostrada uma única vez, e entre com email ou BI. Depois cadastre produtos e utilizadores, registe as compras, disponibilize os respetivos lotes, abra o caixa e comece a vender.
 
 ```sh
 npm test
@@ -133,14 +133,18 @@ A evolução operacional está descrita em [OPERACAO.md](OPERACAO.md): balcões 
 
 Todas as janelas modais usam cabeçalho azulado e botão X vermelho. Clicar fora e premir Esc não fecha nem limpa o formulário; o fecho é explícito pelos controlos da janela ou pela conclusão da operação.
 
-### Armazém unificado e disponibilização para venda
+### Armazém: stock global, compras e lotes
 
-**Armazém** reúne o catálogo, compras/entradas, stock físico, stock válido, custos autorizados, preços, regras fiscais, lotes e validades. A consulta do catálogo continua sujeita aos acessos existentes; lotes e histórico completo exigem a permissão de armazém. Contactos privados dos parceiros e custos continuam protegidos pelas permissões.
+A página **Armazém** mostra apenas cada produto, o stock total, a quantidade disponível para venda e os botões **Nova compra** e **Ver detalhes**. Custos, embalagens, códigos, regras fiscais, fornecedor e lotes aparecem só quando se abrem os detalhes. No cadastro, **Mais definições** recolhe os campos menos frequentes. O histórico de entradas e saídas também só abre quando pedido, mantendo pesquisa, filtros e paginação.
 
-Novos produtos começam **não disponibilizados**. No cadastro pode escolher disponibilizar; quem regista entradas também pode usar **Disponibilizar / Retirar da venda** no catálogo. Para aparecer no ponto de venda, o produto precisa de estar disponibilizado e ter stock válido superior a zero. A API volta a verificar disponibilidade, validade e quantidade ao finalizar, incluindo carrinhos abertos noutro dispositivo. Produtos já existentes mantêm a disponibilização na migração, sem alterar stock nem recibos.
+**Nova compra** existe apenas no stock global do produto. Exige fornecedor, quantidade, custo, **data da compra** e **data de expiração**, mesmo quando o produto já tinha outras compras. A compra não pode ter data futura e a expiração não pode ser anterior à compra. Compras históricas já expiradas podem ser registadas, mas nunca disponibilizadas para venda. A referência da compra é opcional.
 
-O consumo usa **FIFO por data/hora de entrada e ID do lote**, independentemente de qual validade termina primeiro. Lotes expirados e lotes sem validade obrigatória confirmada nunca são vendidos. Cada parcela vendida cria uma saída no histórico, com lote, quantidade, pessoa, data e recibo, na mesma transação da venda. As vendas anteriores também são incluídas por uma migração executada uma única vez, sem descontar stock novamente.
+Cada compra cria sempre **um novo lote indisponível**, sem reforçar nem disponibilizar automaticamente lotes anteriores. A decisão **Disponibilizar lote / Retirar da venda** fica em **Ver detalhes → lote**, para quem tem permissão de entradas. Nem o cadastro do produto nem o pedido da compra podem autorizar a venda. O ponto de venda soma apenas os lotes disponibilizados, com quantidade e validade válidas, e volta a verificar essa condição ao finalizar.
 
-**Histórico de entradas e saídas** abre compras, vendas, devoluções, desperdícios, expirados e outras saídas, com 50 movimentos por página. Pesquisa por produto, código, pessoa, lote, recibo ou motivo; filtros por produto, tipo, direção e datas de Angola são aplicados antes da paginação. A pesquisa aceita diferenças de maiúsculas e acentos. Saídas manuais exigem sempre motivo; uma saída por expiração exige lote efetivamente expirado. Cancelar uma venda repõe os lotes originais e regista devoluções, sem apagar a venda nem duplicar stock.
+O consumo usa **FIFO pela data de compra**, seguido da data/hora do registo e ID para desempates. Assim, uma compra antiga registada depois sai antes de uma compra mais recente, desde que o seu lote esteja disponibilizado e dentro da validade. Registos anteriores à atualização não recebem datas de compra inventadas: mostram **Data de compra por confirmar** e usam a data do registo como alternativa para a ordenação. A atualização preserva as disponibilizações anteriores por lote e não repete descontos de stock.
 
-A delegação de acessos valida também as permissões implícitas numa mudança de perfil. Não é possível desativar uma pessoa com caixa aberto. O relatório fiscal exclui cancelamentos tanto dos totais como do detalhe por regra.
+Não há reforço manual de quantidade num lote existente. **Registar devolução**, nos detalhes do lote, exige escolher um recibo que realmente usou esse lote e indicar um motivo. A devolução disponível nesta versão é **integral**, requer permissão de cancelamento/reembolso e devolve todos os produtos do recibo aos respetivos lotes originais, com o reembolso registado. Não cria uma nova compra, não altera as quantidades inicialmente compradas e não pode ser repetida. Devoluções parciais continuam fora do âmbito desta versão.
+
+As saídas por desperdício, expiração e outros motivos mantêm quantidade e motivo obrigatórios, acessíveis ao abrir o lote. Cada venda e devolução fica no histórico por lote, pessoa, data e recibo, na mesma transação que atualiza o stock. O histórico tem 50 movimentos por página, pesquisa sem distinção de maiúsculas/acentos e filtros por produto, tipo, direção e datas de Angola. Custos e contactos continuam sujeitos às permissões.
+
+A delegação valida também permissões implícitas numa mudança de perfil. Pessoas com caixa aberto não podem ser desativadas. O relatório fiscal exclui cancelamentos tanto dos totais como do detalhe por regra.

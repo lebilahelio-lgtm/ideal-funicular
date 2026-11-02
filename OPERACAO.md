@@ -6,7 +6,7 @@
 2. Em **Equipa e permissões**, cadastra o gerente, atendentes, responsáveis de caixa, responsáveis de armazém e colaboradores de armazém. Em **Acesso**, escolhe as autorizações concretas. O proprietário mantém todas as responsabilidades sem precisar de outra conta; o gerente pode acumular funções de caixa e de armazém se o proprietário as autorizar.
 3. Cada pessoa consulta **A minha conta → Código pessoal de caixa**. Para abrir um turno, escolhe um balcão livre, preenche o fundo inicial e introduz os quatro algarismos nos quadrados. O balcão fica ocupado por essa pessoa até ao fecho; nem uma segunda pessoa no mesmo balcão nem dois turnos simultâneos da mesma pessoa são permitidos.
 4. O proprietário cadastra os parceiros ou delega consulta/edição ao gerente. O pessoal autorizado do armazém vê apenas os nomes dos fornecedores na seleção e pode usar **+ Fornecedor** para registar um novo com nome, telefone, email e localização. Não recebe a lista dos contactos completos.
-5. O responsável do armazém define os produtos, unidades, conteúdo das embalagens, preços e regras de validade. O colaborador autorizado regista a quantidade comprada, o custo dessa compra, o fornecedor e a validade de cada lote; isso não altera os dados fixos nem reescreve uma compra anterior.
+5. O responsável do armazém define os produtos e os dados fixos. No stock global do produto, o colaborador autorizado usa **Nova compra** para registar fornecedor, quantidade, custo, data de compra e data de expiração. Cada compra cria um lote indisponível; a disponibilização é uma decisão posterior, nos detalhes desse lote.
 
 ## Perfis e acumulação de funções
 
@@ -39,11 +39,13 @@ Na migração, os turnos antigos são associados a balcões por utilizador, pois
 
 ## Catálogo, disponibilização, lotes e saídas
 
-O menu **Armazém** reúne produtos, compras e stock. Novos produtos ficam fora da venda até serem disponibilizados no cadastro ou pelo botão **Disponibilizar**. Produtos já existentes mantêm a disponibilidade durante a atualização. O ponto de venda lista apenas produtos disponibilizados com stock vendável positivo; **Retirar da venda** bloqueia também a finalização de carrinhos já abertos. O botão **Histórico de entradas e saídas** mostra compras, vendas por lote, devoluções e saídas manuais, com pesquisa e filtros.
+O menu **Armazém** apresenta uma lista compacta do stock global por produto. **Nova compra** só aparece nessa lista; **Ver detalhes** abre os dados do produto e os seus lotes. Não há tabelas globais de lotes nem custos e definições técnicas permanentemente expostos. O histórico completo abre por botão, com pesquisa e filtros.
+
+Cada nova compra exige data de compra e data de expiração e cria um lote indisponível, mesmo se outros lotes do produto já estiverem à venda. **Disponibilizar lote** autoriza apenas o lote escolhido. A compra nunca pode apontar para um lote existente nem definir a sua disponibilidade. A correção de dados do lote não pode alterar a quantidade comprada, quantidade restante nem a data da compra. A única entrada adicional num lote existente é uma devolução de venda com motivo e recibo, descrita abaixo.
 
 Cada compra cria um lote. Os lotes têm fornecedor, data/hora da entrada, validade, quantidade inicial e quantidade restante. Os dados de produtos e as quantidades históricas não são substituídos por uma correção de lote: essa correção é registada na auditoria com os valores anteriores e novos. Para acrescentar quantidade comprada, regista-se outra entrada.
 
-O método implementado é **FIFO**: a entrada com data/hora mais antiga sai primeiro, com desempate por ID do lote. A validade não muda essa prioridade, mas lotes expirados ou sem validade obrigatória confirmada são excluídos da venda. O desconto dos lotes, a venda, os itens e os movimentos de saída são uma única transação. Cada saída guarda lote, quantidade, pessoa, data e recibo.
+O método implementado é **FIFO**: a compra com data mais antiga sai primeiro, com desempate pela data/hora do registo e ID do lote, entre os lotes disponibilizados. A validade não muda essa prioridade, mas lotes expirados ou sem validade obrigatória confirmada são excluídos da venda. O desconto dos lotes, a venda, os itens e os movimentos de saída são uma única transação. Cada saída guarda lote, quantidade, pessoa, data e recibo.
 
 A validade é considerada até ao fim do dia indicado, segundo Angola. Lotes já expirados são excluídos do stock vendável; continuam no stock físico até à saída. Um produto definido como sujeito a validade exige uma data nas novas entradas e não vende lotes sem data confirmada. Os alertas aparecem em **Armazém** quando o prazo em dias configurado no produto é atingido, além dos alertas de lotes antigos por verificar.
 
@@ -51,7 +53,7 @@ O stock anterior é migrado para lotes identificados como antigos, sem inventar 
 
 ## Cancelamentos e reembolsos
 
-Só quem tem **Responsável de caixa - cancelar vendas e reembolsar** pode cancelar, indicando um motivo. É um cancelamento integral; não há devoluções parciais nesta implementação. A venda, os itens, valores e regras fiscais originais não são alterados. Uma tabela separada guarda a pessoa, a data, o motivo e o reembolso. O recibo e o histórico mostram **Cancelada**; o CSV identifica o estado. A repetição é bloqueada e a reposição dos lotes não pode ocorrer duas vezes.
+Só quem tem **Responsável de caixa - cancelar vendas e reembolsar** pode cancelar, indicando um motivo. A opção **Registar devolução**, nos detalhes de um lote, exige um recibo que tenha usado esse lote e um motivo obrigatório; usa este mesmo cancelamento integral e registo de reembolso, sem permitir quantidades arbitrárias nem criar compras adicionais. É um cancelamento integral; não há devoluções parciais nesta implementação. A venda, os itens, valores e regras fiscais originais não são alterados. Uma tabela separada guarda a pessoa, a data, o motivo e o reembolso. O recibo e o histórico mostram **Cancelada**; o CSV identifica o estado. A repetição é bloqueada e a reposição dos lotes não pode ocorrer duas vezes.
 
 Os produtos voltam aos lotes originais. Se a validade entretanto tiver passado, continuam fora do stock vendável. Para vendas antigas sem alocações, a devolução fica num lote antigo por verificar, sem inventar uma validade. O cancelamento pressupõe que a mercadoria volta ao stock físico; se estiver inutilizável, deve seguir-se uma saída por desperdício/expiração com motivo.
 

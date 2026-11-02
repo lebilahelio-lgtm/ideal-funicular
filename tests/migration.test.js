@@ -67,13 +67,19 @@ test('existing lot allocations gain sale movements once without changing stock o
    INSERT INTO sales(id,user_id,shift_id,created,customer,subtotal,discount,total,paid,change_due,method) VALUES(1,1,1,'2026-10-30 10:00:00','Cliente',300,0,300,300,0,'dinheiro');
    INSERT INTO items(id,sale_id,product_id,name,unit,quantity,price,total) VALUES(1,1,1,'Arroz','kg',3,100,300);
    INSERT INTO lots(id,product_id,initial,remaining) VALUES(1,1,1000,0),(2,1,9000,7000);
+   INSERT INTO products(id,name,category,unit,stock,pack_type,pack_size,pack_cost,price,sale_enabled) VALUES(2,'Feijão','Alimentares','kg',2,'Saco',1,50,100,0);
+   INSERT INTO lots(id,product_id,initial,remaining) VALUES(3,2,2000,2000);
    INSERT INTO allocations(item_id,lot_id,quantity) VALUES(1,1,1000),(1,2,2000);
-   DELETE FROM operations_migrations WHERE name='sale-movements-v1';`);
-  old.close();await startAndStop();await startAndStop();
+   DELETE FROM operations_migrations WHERE name IN ('sale-movements-v1','lot-availability-v2');`);
+  old.close();await startAndStop();
+  const released=new DatabaseSync(join(dir,'loja.sqlite'));assert.equal(released.prepare('SELECT sale_enabled FROM lots WHERE id=2').get().sale_enabled,1);released.prepare('UPDATE lots SET sale_enabled=0 WHERE id=2').run();released.close();
+  await startAndStop();
   const upgraded=new DatabaseSync(join(dir,'loja.sqlite'));
   try{
    const movements=upgraded.prepare("SELECT * FROM movements WHERE kind='venda' ORDER BY lot_id").all();assert.equal(movements.length,2);assert.deepEqual(movements.map(m=>m.quantity),[-1,-2]);assert.ok(movements.every(m=>m.sale_id===1&&m.created==='2026-10-30 10:00:00'));
-   assert.equal(upgraded.prepare('SELECT stock FROM products').get().stock,7);assert.equal(upgraded.prepare('SELECT SUM(remaining) AS n FROM lots').get().n,7000);
+   assert.equal(upgraded.prepare('SELECT stock FROM products WHERE id=1').get().stock,7);assert.equal(upgraded.prepare('SELECT SUM(remaining) AS n FROM lots WHERE product_id=1').get().n,7000);
+   assert.equal(upgraded.prepare('SELECT sale_enabled FROM lots WHERE id=2').get().sale_enabled,0);assert.equal(upgraded.prepare('SELECT sale_enabled FROM lots WHERE id=3').get().sale_enabled,0);assert.equal(upgraded.prepare('SELECT purchased_on FROM lots WHERE id=2').get().purchased_on,null);
+   upgraded.prepare('INSERT INTO lots(product_id,initial,remaining) VALUES(1,1000,1000)').run();assert.equal(upgraded.prepare('SELECT sale_enabled FROM lots ORDER BY id DESC LIMIT 1').get().sale_enabled,0);
    assert.equal(upgraded.prepare('SELECT total FROM sales').get().total,300);assert.equal(upgraded.prepare('SELECT quantity FROM items').get().quantity,3);assert.equal(upgraded.prepare('SELECT COUNT(*) AS n FROM allocations').get().n,2);
   }finally{upgraded.close();}
  }finally{rmSync(dir,{recursive:true,force:true});}

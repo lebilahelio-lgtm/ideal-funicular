@@ -52,12 +52,13 @@ test('physical registers, private rotating PINs, warehouse roles, FIFO lots, par
  assert.equal((await request('partners',{name:'Negado'},worker.cookie)).status,403);
  const partner=await request('partners',{name:'Parceiro Banco',kind:'outro',phone:'923456789',email:'contacto@banco.ao',location:'Luanda'});assert.equal(partner.status,200);
  assert.equal((await request('suppliers',undefined,worker.cookie)).body.suppliers.length,1);
- const p=await request('products',{name:'Arroz',category:'Alimentares',unit:'kg',minimum:1,pack_type:'Saco',pack_size:1,pack_cost:50,price:100,sale_enabled:true,expiry_required:true,expiry_warning_days:10},responsible.cookie);assert.equal(p.status,200);
+ const p=await request('products',{name:'Arroz',category:'Alimentares',unit:'kg',minimum:1,pack_type:'Saco',pack_size:1,pack_cost:50,price:100,expiry_required:true,expiry_warning_days:10},responsible.cookie);assert.equal(p.status,200);
  const future=n=>new Date(Date.now()+n*86400000).toISOString().slice(0,10);
- const entry={product_id:p.body.id,packs:1,reason:'Compra de teste',supplier_id:supplier.body.id};
+ const entry={purchased_on:'2000-01-01',product_id:p.body.id,packs:1,reason:'Compra de teste',supplier_id:supplier.body.id};
  assert.equal((await request('stock',entry,worker.cookie)).status,400); // Mandatory expiry.
  const long=await request('stock',{...entry,expires_on:future(30)},worker.cookie),short=await request('stock',{...entry,expires_on:future(5)},worker.cookie);
  assert.equal(long.status,200);assert.equal(short.status,200);
+ assert.equal((await request('lots/availability',{id:long.body.id,enabled:true},worker.cookie)).status,200);assert.equal((await request('lots/availability',{id:short.body.id,enabled:true},worker.cookie)).status,200);
  db.prepare("UPDATE lots SET received='2020-01-01 00:00:00' WHERE id=?").run(long.body.id);
  const alerts=(await request('state',undefined,worker.cookie)).body.expiry_alerts;assert.ok(alerts.some(l=>l.id===short.body.id));
  const sale=await request('sales',{items:[{product_id:p.body.id,quantity:1.5}],discount:0,paid:150,method:'dinheiro'},first.cookie);assert.equal(sale.status,200);assert.equal(sale.body.items[0].lots.find(l=>l.lot_id===short.body.id).expires_on,future(5));
@@ -88,7 +89,7 @@ test('physical registers, private rotating PINs, warehouse roles, FIFO lots, par
  assert.equal((await request('shifts/close',{closing:50},cashLead.cookie)).status,200);
  assert.equal(db.prepare('SELECT expected FROM shifts WHERE id=?').get(later.body.shift_id).expected,55000);
  // FIFO is the tie-breaker when expiration dates match.
- const sameExpiry=await request('stock',{...entry,expires_on:future(30)},worker.cookie);assert.equal(sameExpiry.status,200);
+ const sameExpiry=await request('stock',{...entry,expires_on:future(30)},worker.cookie);assert.equal(sameExpiry.status,200);assert.equal((await request('lots/availability',{id:sameExpiry.body.id,enabled:true},worker.cookie)).status,200);
  const tieSale=await request('sales',{items:[{product_id:p.body.id,quantity:1.1}],discount:0,paid:110,method:'dinheiro'},second.cookie);assert.equal(tieSale.status,200);
  assert.equal(db.prepare('SELECT remaining FROM lots WHERE id=?').get(long.body.id).remaining,0);
  assert.equal(db.prepare('SELECT remaining FROM lots WHERE id=?').get(sameExpiry.body.id).remaining,900);
