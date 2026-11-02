@@ -6,7 +6,7 @@
 2. Em **Equipa e permissões**, cadastra o gerente, atendentes, responsáveis de caixa, responsáveis de armazém e colaboradores de armazém. Em **Acesso**, escolhe as autorizações concretas. O proprietário mantém todas as responsabilidades sem precisar de outra conta; o gerente pode acumular funções de caixa e de armazém se o proprietário as autorizar.
 3. Cada pessoa consulta **A minha conta → Código pessoal de caixa**. Para abrir um turno, escolhe um balcão livre, preenche o fundo inicial e introduz os quatro algarismos nos quadrados. O balcão fica ocupado por essa pessoa até ao fecho; nem uma segunda pessoa no mesmo balcão nem dois turnos simultâneos da mesma pessoa são permitidos.
 4. O proprietário cadastra os parceiros ou delega consulta/edição ao gerente. O pessoal autorizado do armazém vê apenas os nomes dos fornecedores na seleção e pode usar **+ Fornecedor** para registar um novo com nome, telefone, email e localização. Não recebe a lista dos contactos completos.
-5. O responsável do armazém define os produtos e os dados fixos. No stock global do produto, o colaborador autorizado usa **Nova compra** para registar fornecedor, quantidade, custo, data de compra e data de expiração. Cada compra cria um lote indisponível; a disponibilização é uma decisão posterior, nos detalhes desse lote.
+5. O responsável do armazém define os produtos e os dados fixos. No stock global do produto, o colaborador autorizado usa **Nova compra** para registar fornecedor, quantidade, custo, data de compra e data de expiração. Cada compra cria um lote indisponível; a disponibilização é uma decisão posterior, na opção **Disponibilizar** desse produto, abrindo o lote.
 
 ## Perfis e acumulação de funções
 
@@ -39,7 +39,7 @@ Na migração, os turnos antigos são associados a balcões por utilizador, pois
 
 ## Catálogo, disponibilização, lotes e saídas
 
-O menu **Armazém** apresenta uma lista compacta do stock global por produto. **Nova compra** só aparece nessa lista; **Ver detalhes** abre os dados do produto e os seus lotes. Não há tabelas globais de lotes nem custos e definições técnicas permanentemente expostos. O histórico completo abre numa página própria, com o caminho **Armazém → Histórico**, pesquisa, filtros e regresso ao stock. As letras e os controlos do armazém e dos detalhes têm tamanhos maiores para facilitar a leitura.
+O menu **Armazém** apresenta uma tabela do stock global com Nome, Categoria, Indisponível, Disponível, Estado e Stock total. Clicar na linha abre ou recolhe uma gaveta inferior com **Nova compra** e **Disponibilizar** à direita. **Disponibilizar** abre os dados e os lotes para autorizar a venda; a gaveta, por si só, não altera stock nem disponibilidade. Apenas uma gaveta fica aberta de cada vez. Não há tabelas globais de lotes nem custos e definições técnicas permanentemente expostos. O histórico completo abre numa página própria, com o caminho **Armazém → Histórico**, pesquisa, filtros e regresso ao stock. As letras e os controlos do armazém e dos detalhes têm tamanhos maiores para facilitar a leitura.
 
 Cada nova compra exige data de compra e data de expiração e cria um lote indisponível, mesmo se outros lotes do produto já estiverem à venda. **Disponibilizar lote** autoriza apenas o lote escolhido. A compra nunca pode apontar para um lote existente nem definir a sua disponibilidade. A correção de dados do lote não pode alterar a quantidade comprada, quantidade restante nem a data da compra. A única entrada adicional num lote existente é uma devolução de venda com motivo e recibo, descrita abaixo.
 
@@ -69,12 +69,12 @@ Os históricos de vendas e de movimentos do armazém são paginados, com 50 regi
 
 ## Alarmes visuais e seleção no ponto de venda
 
-O total físico é azul. A quantidade disponível é verde e passa a vermelho apenas quando é menor que o mínimo configurado, sem criar outro aviso ou símbolo de escassez. O único triângulo com !, junto à quantidade disponível, mostra o pior estado entre lotes disponibilizados com quantidade: verde (em dia), laranja (dentro do prazo de aviso) ou vermelho (expirado). Um lote expirado continua a sinalizar a necessidade de tratamento mesmo quando outro lote válido pode ser vendido. Lotes pendentes e esgotados não alteram o alarme global. Os detalhes de cada lote mostram o respetivo estado, com cor e texto; lotes expirados continuam bloqueados para venda.
+O total físico é azul. A quantidade disponível é verde e passa a vermelho apenas quando é menor que o mínimo configurado, sem criar outro aviso ou símbolo de escassez. O único triângulo com !, na coluna Estado, junto à coluna Disponível, mostra o pior estado entre lotes disponibilizados com quantidade: verde (em dia), laranja (dentro do prazo de aviso) ou vermelho (expirado). Um lote expirado continua a sinalizar a necessidade de tratamento mesmo quando outro lote válido pode ser vendido. Lotes pendentes e esgotados não alteram o alarme global. Os detalhes de cada lote mostram o respetivo estado, com cor e texto; lotes expirados continuam bloqueados para venda.
 
 Com dois ou mais lotes vendáveis, clicar no produto no caixa abre uma escolha com o mais antigo selecionado e sugerido por FIFO. Apenas lotes disponibilizados, dentro da validade e com quantidade aparecem. Escolher um lote diferente é permitido e é respeitado pelo servidor. As linhas do carrinho identificam produto e lote; não há substituição automática de uma escolha explícita se o lote se tornar indisponível. Os pedidos sem lote continuam a usar o FIFO automático. A venda e as saídas por lote mantêm-se na mesma transação.
 
 ## Apresentação das janelas
 
-**Ver detalhes** tem botão verde e mostra só lotes com quantidade positiva. Os lotes esgotados permanecem nos registos e no histórico, mas não ocupam a lista operacional. A escolha de lote no ponto de venda é uma janela pequena, com o mais antigo sugerido e apenas as informações necessárias para selecionar.
+**Disponibilizar** tem botão verde na gaveta da linha e mostra só lotes com quantidade positiva. Os lotes esgotados permanecem nos registos e no histórico, mas não ocupam a lista operacional. A escolha de lote no ponto de venda é uma janela pequena, com o mais antigo sugerido e apenas as informações necessárias para selecionar.
 
 Em todas as janelas, o cabeçalho e o X ficam fora da área de rolagem. Só o conteúdo abaixo do cabeçalho rola, incluindo formulários longos e listas com muitos lotes.
