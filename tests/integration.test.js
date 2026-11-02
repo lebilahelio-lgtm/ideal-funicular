@@ -36,7 +36,7 @@ test('complete shop workflow, atomic stock, permissions and cash reconciliation'
   owner=(await request('login',{identifier:'ANA@GMAIL.COM',password:setup.body.password})).cookie;
   assert.ok(owner);
   assert.equal((await request('login',{identifier:admin.bi,password:'incorrect'})).status,401);
-  const product=(await request('products',{name:'Arroz',category:'Alimentares',unit:'kg',barcode:'12345',minimum:5,pack_type:'Saco',pack_size:25,pack_cost:20000,price:1000})).body;
+  const product=(await request('products',{name:'Arroz',category:'Alimentares',unit:'kg',barcode:'12345',minimum:5,pack_type:'Saco',pack_size:25,pack_cost:20000,price:1000,sale_enabled:true})).body;
   assert.ok(product.id);
   for(const name of ['Arroz 1234','Arroz!','Arroz-Integral'])assert.equal((await request('products',{name})).status,400);
   assert.equal((await request('stock',{product_id:product.id,packs:2,reason:'Compra inicial'})).status,200);
@@ -100,6 +100,9 @@ test('complete shop workflow, atomic stock, permissions and cash reconciliation'
   assert.equal((await request('users',{...sellerData,email:'other@gmail.com',bi:'009763936CA042',role:'proprietario'},mgrCookie)).status,400);
   assert.equal((await request('users/profile',{id:1,email:'changed@gmail.com',phone:'923456789'},mgrCookie)).status,403);
   assert.equal((await request('users',{...sellerData,email:'other@gmail.com',bi:'009763936CA042'},mgrCookie)).status,200);
+  assert.equal((await request('users/access',{id:joao.id,role:'vendedor',active:false})).status,400);
+  const closingShift=(await request('state',undefined,seller)).body.current_shift;
+  assert.equal((await request('shifts/close',{closing:(closingShift.opening+closingShift.cash_sales)/100},seller)).status,200);
   assert.equal((await request('users/access',{id:joao.id,role:'vendedor',active:false})).status,200);
   assert.equal((await request('state',undefined,seller)).status,401);
   assert.ok((await request('state')).body.audit.length>=8);
@@ -151,7 +154,7 @@ test('complete shop workflow, atomic stock, permissions and cash reconciliation'
   assert.equal((await request('state')).body.shifts.length,50);
   database.close();
   // A single receipt includes multiple products; underpayment changes neither stock nor history.
-  const oil=await request('products',{name:'Óleo',category:'Alimentares',unit:'L',barcode:'54321',minimum:2,pack_type:'Caixa',pack_size:6,pack_cost:2000,price:500});
+  const oil=await request('products',{name:'Óleo',category:'Alimentares',unit:'L',barcode:'54321',minimum:2,pack_type:'Caixa',pack_size:6,pack_cost:2000,price:500,sale_enabled:true});
   assert.equal(oil.status,200);assert.equal((await request('stock',{product_id:oil.body.id,packs:2,reason:'Compra de óleo'})).status,200);
   const basket={items:[{product_id:product.id,quantity:1.25},{product_id:oil.body.id,quantity:2}],discount:250,paid:1800,method:'dinheiro'};
   const prior=(await request('state')).body;

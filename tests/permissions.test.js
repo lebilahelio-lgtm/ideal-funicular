@@ -28,7 +28,7 @@ test('custom permissions restrict APIs, state data and delegation while preservi
  let manager=(await request('login',{identifier:'manager@gmail.com',password:mgr.body.password})).cookie;
  const staff=await request('users',{...identity,name:'João Silva',bi:'009763934CA042',email:'seller@gmail.com',role:'vendedor'});
  seller=(await request('login',{identifier:'seller@gmail.com',password:staff.body.password})).cookie;
- const product=await request('products',{name:'Arroz',category:'Alimentares',unit:'kg',minimum:2,pack_type:'Saco',pack_size:10,pack_cost:500,price:100});
+ const product=await request('products',{name:'Arroz',category:'Alimentares',unit:'kg',minimum:2,pack_type:'Saco',pack_size:10,pack_cost:500,price:100,sale_enabled:true});
  await request('stock',{product_id:product.body.id,packs:2,reason:'Teste'});
  const access=(id,role,values)=>({id,role,active:true,permissions:values});
  assert.equal((await request('users/access',access(staff.body.id,'vendedor',{stock_edit:true}))).status,403);
@@ -77,6 +77,7 @@ test('custom permissions restrict APIs, state data and delegation while preservi
  assert.equal(rule.status,200);
  const newProduct={name:'Sabonete',category:'Higiene',unit:'un',minimum:2,pack_type:'Caixa',pack_size:10,pack_cost:500,price:100};
  assert.equal((await request('products',{...newProduct,tax_rule_id:rule.body.id},manager)).status,403);
+ assert.equal((await request('products',{...newProduct,sale_enabled:true},manager)).status,403);
  assert.equal((await request('products',newProduct,manager)).status,200);
  assert.equal((await request('users/access',access(mgr.body.id,'gerente',{users:false}))).status,200);
  manager=(await request('login',{identifier:'manager@gmail.com',password:mgr.body.password})).cookie;

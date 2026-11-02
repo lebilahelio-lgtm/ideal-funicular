@@ -18,7 +18,7 @@ before(async()=>{
   child=spawn(process.execPath,['server.js'],{env:{...process.env,PORT:String(port),DATA_DIR:dir,HOST:'127.0.0.1'},stdio:['ignore','pipe','pipe']});await new Promise((resolve,reject)=>{child.stdout.once('data',resolve);child.once('exit',code=>reject(Error('Server exited '+code)));setTimeout(()=>reject(Error('Server timeout')),10000).unref();});
 });
 after(()=>{child?.kill();rmSync(dir,{recursive:true,force:true});});
-test('physical registers, private rotating PINs, warehouse roles, lots, partners and immutable cancellations',async()=>{
+test('physical registers, private rotating PINs, warehouse roles, FIFO lots, partners and immutable cancellations',async()=>{
  const identity={name:'Ana Silva',bi:'009763932CA042',birth_date:'1990-01-01',email:'owner@gmail.com'};
  const created=await request('setup',identity);owner=(await request('login',{identifier:identity.email,password:created.body.password})).cookie;
  let seq=100;
@@ -52,15 +52,16 @@ test('physical registers, private rotating PINs, warehouse roles, lots, partners
  assert.equal((await request('partners',{name:'Negado'},worker.cookie)).status,403);
  const partner=await request('partners',{name:'Parceiro Banco',kind:'outro',phone:'923456789',email:'contacto@banco.ao',location:'Luanda'});assert.equal(partner.status,200);
  assert.equal((await request('suppliers',undefined,worker.cookie)).body.suppliers.length,1);
- const p=await request('products',{name:'Arroz',category:'Alimentares',unit:'kg',minimum:1,pack_type:'Saco',pack_size:1,pack_cost:50,price:100,expiry_required:true,expiry_warning_days:10},responsible.cookie);assert.equal(p.status,200);
+ const p=await request('products',{name:'Arroz',category:'Alimentares',unit:'kg',minimum:1,pack_type:'Saco',pack_size:1,pack_cost:50,price:100,sale_enabled:true,expiry_required:true,expiry_warning_days:10},responsible.cookie);assert.equal(p.status,200);
  const future=n=>new Date(Date.now()+n*86400000).toISOString().slice(0,10);
  const entry={product_id:p.body.id,packs:1,reason:'Compra de teste',supplier_id:supplier.body.id};
  assert.equal((await request('stock',entry,worker.cookie)).status,400); // Mandatory expiry.
  const long=await request('stock',{...entry,expires_on:future(30)},worker.cookie),short=await request('stock',{...entry,expires_on:future(5)},worker.cookie);
  assert.equal(long.status,200);assert.equal(short.status,200);
+ db.prepare("UPDATE lots SET received='2020-01-01 00:00:00' WHERE id=?").run(long.body.id);
  const alerts=(await request('state',undefined,worker.cookie)).body.expiry_alerts;assert.ok(alerts.some(l=>l.id===short.body.id));
  const sale=await request('sales',{items:[{product_id:p.body.id,quantity:1.5}],discount:0,paid:150,method:'dinheiro'},first.cookie);assert.equal(sale.status,200);assert.equal(sale.body.items[0].lots.find(l=>l.lot_id===short.body.id).expires_on,future(5));
- assert.equal(db.prepare('SELECT remaining FROM lots WHERE id=?').get(short.body.id).remaining,0);assert.equal(db.prepare('SELECT remaining FROM lots WHERE id=?').get(long.body.id).remaining,500);
+ assert.equal(db.prepare('SELECT remaining FROM lots WHERE id=?').get(short.body.id).remaining,500);assert.equal(db.prepare('SELECT remaining FROM lots WHERE id=?').get(long.body.id).remaining,0);
  assert.equal((await request('sales/cancel',{id:sale.body.id,reason:'Erro'},first.cookie)).status,403);
  assert.equal((await request('sales/cancel',{id:sale.body.id,reason:'Cliente desistiu'},cashLead.cookie)).status,200);
  assert.equal((await request('sales/cancel',{id:sale.body.id,reason:'Repetição'},cashLead.cookie)).status,409);

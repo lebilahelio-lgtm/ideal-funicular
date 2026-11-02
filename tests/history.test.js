@@ -30,7 +30,7 @@ test('history isolates seller cash registers and filters all leadership history 
   actors.push({id:created.body.id,cookie:(await request('login',{identifier:email,password:created.body.password})).cookie});
  }
  const [mgr,a,b]=actors;
- const product=await request('products',{name:'Arroz',category:'Alimentares',unit:'kg',minimum:1,pack_type:'Saco',pack_size:100,pack_cost:500,price:100});
+ const product=await request('products',{name:'Arroz',category:'Alimentares',unit:'kg',minimum:1,pack_type:'Saco',pack_size:100,pack_cost:500,price:100,sale_enabled:true});
  await request('stock',{product_id:product.body.id,packs:2,reason:'Teste'});
  const sale={items:[{product_id:product.body.id,quantity:1}],discount:0,paid:100,method:'dinheiro'};
  const receipts=[];

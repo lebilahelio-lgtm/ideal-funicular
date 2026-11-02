@@ -37,15 +37,17 @@ O balcão é um posto físico reutilizável. O turno é cada abertura por uma pe
 
 Na migração, os turnos antigos são associados a balcões por utilizador, pois a versão anterior não guardava o número do balcão físico. Essa associação não pretende reconstruir a disposição histórica real da loja. Os números futuros são configurados pela direção. As vendas, compras, quantidades e valores anteriores mantêm-se.
 
-## Lotes, validade e saídas
+## Catálogo, disponibilização, lotes e saídas
+
+O menu **Armazém** reúne produtos, compras e stock. Novos produtos ficam fora da venda até serem disponibilizados no cadastro ou pelo botão **Disponibilizar**. Produtos já existentes mantêm a disponibilidade durante a atualização. O ponto de venda lista apenas produtos disponibilizados com stock vendável positivo; **Retirar da venda** bloqueia também a finalização de carrinhos já abertos. O botão **Histórico de entradas e saídas** mostra compras, vendas por lote, devoluções e saídas manuais, com pesquisa e filtros.
 
 Cada compra cria um lote. Os lotes têm fornecedor, data/hora da entrada, validade, quantidade inicial e quantidade restante. Os dados de produtos e as quantidades históricas não são substituídos por uma correção de lote: essa correção é registada na auditoria com os valores anteriores e novos. Para acrescentar quantidade comprada, regista-se outra entrada.
 
-O método implementado é **FEFO**: vence primeiro, sai primeiro. Em igualdade de validade, aplica-se **FIFO**: a entrada mais antiga sai primeiro, com desempate por ID. Produtos sem validade aplicam FIFO. Isto corresponde à instrução de deixar para depois o lote de validade mais longa, mesmo que tenha entrado antes. O desconto dos lotes, a venda, os itens e a quantidade agregada são uma única transação. Os lotes utilizados e a validade conhecida nessa venda ficam registados com os itens.
+O método implementado é **FIFO**: a entrada com data/hora mais antiga sai primeiro, com desempate por ID do lote. A validade não muda essa prioridade, mas lotes expirados ou sem validade obrigatória confirmada são excluídos da venda. O desconto dos lotes, a venda, os itens e os movimentos de saída são uma única transação. Cada saída guarda lote, quantidade, pessoa, data e recibo.
 
-A validade é considerada até ao fim do dia indicado, segundo Angola. Lotes já expirados são excluídos do stock vendável; continuam no stock físico até à saída. Um produto definido como sujeito a validade exige uma data nas novas entradas e não vende lotes sem data confirmada. Os alertas aparecem em **Armazém e validades** quando o prazo em dias configurado no produto é atingido, além dos alertas de lotes antigos por verificar.
+A validade é considerada até ao fim do dia indicado, segundo Angola. Lotes já expirados são excluídos do stock vendável; continuam no stock físico até à saída. Um produto definido como sujeito a validade exige uma data nas novas entradas e não vende lotes sem data confirmada. Os alertas aparecem em **Armazém** quando o prazo em dias configurado no produto é atingido, além dos alertas de lotes antigos por verificar.
 
-O stock anterior é migrado para lotes identificados como antigos, sem inventar fornecedor ou validade. O pessoal autorizado confirma esses dados. Para desperdícios e prazo expirado, escolhe o lote, a quantidade e um motivo obrigatório. A saída conserva data, hora, pessoa, tipo e motivo. Um lote não expirado não pode ser retirado como expirado. Quantidades insuficientes ou unidades fracionárias incompatíveis são rejeitadas.
+O stock anterior é migrado para lotes identificados como antigos, sem inventar fornecedor ou validade. O pessoal autorizado confirma esses dados. Para desperdícios, prazo expirado e outras saídas, escolhe o lote, a quantidade e um motivo obrigatório. A saída conserva data, hora, pessoa, tipo e motivo. Um lote não expirado não pode ser retirado como expirado. Quantidades insuficientes ou unidades fracionárias incompatíveis são rejeitadas.
 
 ## Cancelamentos e reembolsos
 
@@ -61,4 +63,4 @@ Indicadores de vendas e resumo interno de IVA excluem vendas canceladas. Os hist
 
 Não há operações de apagar históricos. Triggers SQLite bloqueiam `DELETE` e `UPDATE` nas vendas, itens, compras/movimentos, auditorias, alocações e cancelamentos, inclusive para as contas de direção. Correções operacionais usam novos movimentos ou registos separados. Quem administra diretamente os ficheiros e o motor SQLite continua a ter controlo técnico sobre esses ficheiros; a aplicação não substitui backups e controlo de acesso ao servidor.
 
-O histórico de vendas é paginado; o painel de movimentos de armazém apresenta os últimos 200 registos, com os restantes preservados na base. Não foram adicionados execução automática de reembolsos bancários, vendas a crédito, múltiplas lojas, notas de crédito fiscais, devoluções parciais, backups automáticos ou movimentações gerais de tesouraria. Os testes de fornecedores usam dados fictícios e não contactam terceiros.
+Os históricos de vendas e de movimentos do armazém são paginados, com 50 registos por página e filtros aplicados sobre todo o histórico. O armazém permite filtrar por pesquisa, produto, tipo, direção e intervalo de datas de Angola. Não foram adicionados execução automática de reembolsos bancários, vendas a crédito, múltiplas lojas, notas de crédito fiscais, devoluções parciais, backups automáticos ou movimentações gerais de tesouraria. Os testes de fornecedores usam dados fictícios e não contactam terceiros.

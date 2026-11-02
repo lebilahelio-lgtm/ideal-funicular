@@ -159,7 +159,9 @@ async function api(req, res, path, body) {
   if(path==='/api/partners'&&req.method==='POST'){allow('partners_edit');return ops.partner(body,user);}
   if(path==='/api/suppliers'&&req.method==='GET'){allow('stock_entry');return {suppliers:ops.suppliers()};}
   if(path==='/api/suppliers'&&req.method==='POST'){allow('supplier_create');allow('stock_entry');return ops.partner(body,user,true);}
-  if(path==='/api/warehouse'&&req.method==='GET'){allow('warehouse');return {lots:ops.lots(),movements:all('SELECT m.*,p.name AS product,p.unit,u.name AS actor FROM movements m JOIN products p ON p.id=m.product_id JOIN users u ON u.id=m.user_id ORDER BY m.id DESC LIMIT 200')};}
+  if(path==='/api/warehouse/history'&&req.method==='POST'){allow('warehouse');return ops.history(body,user);}
+  if(path==='/api/products/availability'&&req.method==='POST'){allow('stock_entry');return ops.setAvailability(body,user);}
+  if(path==='/api/warehouse'&&req.method==='GET'){allow('warehouse');return {lots:ops.lots()};}
   if(path==='/api/lots/update'&&req.method==='POST'){allow('stock_entry');return ops.updateLot(body,user);}
   if(path==='/api/warehouse/dispose'&&req.method==='POST'){allow('stock_exit');return ops.dispose(body,user);}
   if(path==='/api/sales/cancel'&&req.method==='POST'){allow('sales_cancel');return ops.cancel(body,user);}
@@ -204,18 +206,18 @@ async function api(req, res, path, body) {
     const manager = user.role !== 'vendedor'||user.permissions.sales_cancel,p=user.permissions;
     const viewSales=p.history||p.dashboard;
     const products = all('SELECT * FROM products WHERE active=1 ORDER BY name');
-    if(!p.products&&!p.sales&&!p.dashboard&&!p.stock_entry)products.length=0;
+    if(!p.products&&!p.sales&&!p.dashboard&&!p.stock_entry&&!p.warehouse)products.length=0;
     for(const product of products){product.physical_stock=product.stock;product.stock=ops.available(product.id);}
-    if (!p.stock_edit) for (const product of products) delete product.pack_cost;
+    if (!p.stock_edit&&!p.stock_entry) for (const product of products) delete product.pack_cost;
     const currentShift=one("SELECT s.*,(SELECT COALESCE(SUM(total),0) FROM sales WHERE shift_id=s.id AND method='dinheiro') AS cash_sales FROM shifts s WHERE user_id=? AND closed IS NULL",user.id);
     if(currentShift)currentShift.cash_sales=ops.cashNet(currentShift.id);
     const cashSummary=currentShift?one("SELECT COUNT(*) AS sales_count,COALESCE(SUM(total),0) AS total_sales,COALESCE(SUM(CASE WHEN method='dinheiro' THEN total ELSE 0 END),0) AS cash_total,COALESCE(SUM(CASE WHEN method='tpa' THEN total ELSE 0 END),0) AS tpa_total,COALESCE(SUM(CASE WHEN method='transferencia' THEN total ELSE 0 END),0) AS transfer_total,MAX(created) AS last_sale_at FROM sales WHERE shift_id=? AND NOT EXISTS(SELECT 1 FROM sale_cancellations c WHERE c.sale_id=sales.id)",currentShift.id):null;
     if(cashSummary)cashSummary.cash_total=ops.cashNet(currentShift.id);
     const cashRecent=currentShift?all('SELECT s.*,u.name AS seller,(SELECT created FROM sale_cancellations WHERE sale_id=s.id) AS cancelled_at,(SELECT r.number FROM registers r JOIN shifts sh ON sh.register_id=r.id WHERE sh.id=s.shift_id) AS register_number FROM sales s JOIN users u ON u.id=s.user_id WHERE shift_id=? ORDER BY s.id DESC LIMIT 5',currentShift.id):[];
-    return { user, products, registers:(p.cash||p.cash_manage)?ops.registers():[],expiry_alerts:p.warehouse?ops.lots().filter(l=>l.warning||l.unknown):[],fiscal:fiscalState(db), current_shift:p.cash?currentShift:null,cash_summary:p.cash?cashSummary:null,cash_recent:p.cash?cashRecent:[], sales: viewSales?all(`SELECT s.*,u.name AS seller,(SELECT created FROM sale_cancellations WHERE sale_id=s.id) AS cancelled_at,(SELECT r.number FROM registers r JOIN shifts sh ON sh.register_id=r.id WHERE sh.id=s.shift_id) AS register_number FROM sales s JOIN users u ON u.id=s.user_id ${manager ? '' : 'WHERE s.user_id=? AND EXISTS (SELECT 1 FROM shifts own WHERE own.id=s.shift_id AND own.user_id=s.user_id)'} ORDER BY s.id DESC LIMIT ${p.history?100:5}`, ...(manager ? [] : [user.id])):[],
+    return { user, products, registers:(p.cash||p.cash_manage)?ops.registers():[],expiry_alerts:p.warehouse?ops.lots().filter(l=>l.warning||l.unknown):[],sale_products:products.filter(product=>product.sale_enabled&&product.stock>0),fiscal:fiscalState(db), current_shift:p.cash?currentShift:null,cash_summary:p.cash?cashSummary:null,cash_recent:p.cash?cashRecent:[], sales: viewSales?all(`SELECT s.*,u.name AS seller,(SELECT created FROM sale_cancellations WHERE sale_id=s.id) AS cancelled_at,(SELECT r.number FROM registers r JOIN shifts sh ON sh.register_id=r.id WHERE sh.id=s.shift_id) AS register_number FROM sales s JOIN users u ON u.id=s.user_id ${manager ? '' : 'WHERE s.user_id=? AND EXISTS (SELECT 1 FROM shifts own WHERE own.id=s.shift_id AND own.user_id=s.user_id)'} ORDER BY s.id DESC LIMIT ${p.history?100:5}`, ...(manager ? [] : [user.id])):[],
       shifts: p.cash?all(`SELECT s.*,u.name AS seller,(SELECT COALESCE(SUM(total),0) FROM sales WHERE shift_id=s.id AND method='dinheiro') - (SELECT COALESCE(SUM(cash_refund),0) FROM sale_cancellations WHERE refund_shift_id=s.id) AS cash_sales FROM shifts s JOIN users u ON u.id=s.user_id ${manager ? '' : 'WHERE s.user_id=?'} ORDER BY s.id DESC LIMIT 50`,...(manager ? [] : [user.id])):[],
       users: p.users ? all('SELECT id,name,email,bi,birth_date,phone,role,active,permissions,job_type FROM users WHERE deleted_at IS NULL ORDER BY id').map(u=>({...u,permissions:permissions(u.role,JSON.parse(u.permissions||'{}'),u.job_type)})) : [],
-      purchases: (p.stock_edit||p.stock_entry) ? all('SELECT m.*,p.name AS product,p.unit,u.name AS actor FROM movements m JOIN products p ON p.id=m.product_id JOIN users u ON u.id=m.user_id ORDER BY m.id DESC LIMIT 100') : [],
+      purchases: (p.stock_edit||p.stock_entry) ? all("SELECT m.*,p.name AS product,p.unit,u.name AS actor FROM movements m JOIN products p ON p.id=m.product_id JOIN users u ON u.id=m.user_id WHERE m.kind='entrada' ORDER BY m.id DESC LIMIT 100") : [],
       audit: p.activity ? all('SELECT a.*,u.name AS actor FROM audit a JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 100') : [],
       chart: p.dashboard?all(`SELECT date(created,'+1 hour') AS day, SUM(total) AS total,COUNT(*) AS count FROM sales WHERE NOT EXISTS(SELECT 1 FROM sale_cancellations c WHERE c.sale_id=sales.id) AND datetime(created,'+1 hour')>=date('now','+1 hour','-13 days') ${manager ? '' : 'AND user_id=?'} GROUP BY date(created,'+1 hour') ORDER BY day`,...(manager ? [] : [user.id])):[],
       metrics: p.dashboard?one(`SELECT COALESCE(SUM(CASE WHEN date(created,'+1 hour')=date('now','+1 hour') THEN total ELSE 0 END),0) AS today,COUNT(CASE WHEN date(created,'+1 hour')=date('now','+1 hour') THEN 1 END) AS count,COALESCE(SUM(CASE WHEN datetime(created,'+1 hour')>=date('now','+1 hour','-6 days') THEN total ELSE 0 END),0) AS current_week,COALESCE(SUM(CASE WHEN datetime(created,'+1 hour')>=date('now','+1 hour','-13 days') AND datetime(created,'+1 hour')<date('now','+1 hour','-6 days') THEN total ELSE 0 END),0) AS previous_week FROM sales WHERE NOT EXISTS(SELECT 1 FROM sale_cancellations c WHERE c.sale_id=sales.id) ${manager ? '' : 'AND user_id=?'}`,...(manager ? [] : [user.id])):{today:0,count:0,current_week:0,previous_week:0} };
@@ -253,6 +255,11 @@ async function api(req, res, path, body) {
         if (existing.unit!==unit && (existing.stock>0 || one('SELECT id FROM items WHERE product_id=? LIMIT 1',body.id))) fail('Não pode alterar a unidade de um produto com stock ou vendas. Crie outro produto.');
         run('UPDATE products SET name=?,category=?,unit=?,barcode=?,minimum=?,pack_type=?,pack_size=?,pack_cost=?,price=? WHERE id=?',name,category,unit,barcode,minimum,pack,size,cost,price,body.id); id=body.id;
       } else { id=Number(run('INSERT INTO products(name,category,unit,barcode,minimum,pack_type,pack_size,pack_cost,price) VALUES(?,?,?,?,?,?,?,?,?)',name,category,unit,barcode,minimum,pack,size,cost,price).lastInsertRowid); }
+      if(body.sale_enabled!==undefined&&typeof body.sale_enabled!=='boolean')fail('Disponibilidade para venda inválida.');
+      const oldAvailability=body.id?one('SELECT sale_enabled FROM products WHERE id=?',id).sale_enabled:0;
+      const saleEnabled=body.sale_enabled===undefined?oldAvailability:Number(body.sale_enabled);
+      if(saleEnabled!==oldAvailability)allow('stock_entry');
+      run('UPDATE products SET sale_enabled=? WHERE id=?',saleEnabled,id);
       if(body.expiry_required!==undefined&&typeof body.expiry_required!=='boolean')fail('Indique se o produto tem validade.');
       const expiryRequired=body.expiry_required===undefined?(body.id?one('SELECT expiry_required FROM products WHERE id=?',id).expiry_required:0):Number(body.expiry_required===true);
       const warning=body.expiry_warning_days??(body.id?one('SELECT expiry_warning_days FROM products WHERE id=?',id).expiry_warning_days:7);if(!Number.isInteger(warning)||warning<1||warning>3650)fail('O alerta de validade deve estar entre 1 e 3650 dias.');
@@ -275,7 +282,7 @@ async function api(req, res, path, body) {
     const shift=one('SELECT id FROM shifts WHERE user_id=? AND closed IS NULL',user.id); if (!shift) fail('Abra o caixa antes de vender.');
     if (!Array.isArray(body.items) || !body.items.length || body.items.length>100) fail('Adicione produtos à venda.');
     const seen=new Set();
-    const items=body.items.map(i=>{ if (seen.has(i.product_id)) fail('Produto repetido.'); seen.add(i.product_id); const p=one('SELECT * FROM products WHERE id=? AND active=1',i.product_id); if (!p) fail('Produto indisponível.'); const quantity=number(i.quantity,'Quantidade',0.001,1e7); if (Math.abs(quantity*1000-Math.round(quantity*1000))>1e-6 || (p.unit==='un' && !Number.isInteger(quantity))) fail('Quantidade inválida para a unidade.'); p.stock=ops.available(p.id);if (quantity>p.stock) fail(`Stock insuficiente: ${p.name}. Disponível: ${p.stock} ${p.unit}; pedido: ${quantity} ${p.unit}. Faltam ${Math.round((quantity-p.stock)*1000)/1000} ${p.unit}.`); return {...p,quantity,total:Math.round(p.price*quantity)}; });
+    const items=body.items.map(i=>{ if(!i||typeof i!=='object'||!Number.isSafeInteger(i.product_id)||i.product_id<1)fail('Produto inválido na venda.');if (seen.has(i.product_id)) fail('Produto repetido.'); seen.add(i.product_id); const p=one('SELECT * FROM products WHERE id=? AND active=1',i.product_id); if (!p || !p.sale_enabled) fail('Produto não disponibilizado pelo armazém.'); const quantity=number(i.quantity,'Quantidade',0.001,1e7); if (Math.abs(quantity*1000-Math.round(quantity*1000))>1e-6 || (p.unit==='un' && !Number.isInteger(quantity))) fail('Quantidade inválida para a unidade.'); p.stock=ops.available(p.id);if (quantity>p.stock) fail(`Stock insuficiente: ${p.name}. Disponível: ${p.stock} ${p.unit}; pedido: ${quantity} ${p.unit}. Faltam ${Math.round((quantity-p.stock)*1000)/1000} ${p.unit}.`); return {...p,quantity,total:Math.round(p.price*quantity)}; });
     const discount=money(body.discount,'Desconto'),paid=money(body.paid,'Valor recebido'),fiscal=fiscalState(db);
     if(body.expected_fiscal_revision!==undefined&&body.expected_fiscal_revision!==fiscal.revision)fail('As regras fiscais mudaram. Atualize os preços/IVA no ponto de venda e confirme os valores antes de finalizar.',409);
     if(fiscal.settings.enabled&&body.expected_fiscal_revision!==fiscal.revision)fail('Atualize os preços/IVA para confirmar o enquadramento fiscal antes de vender.',409);
@@ -285,7 +292,7 @@ async function api(req, res, path, body) {
     const total=result.total,subtotal=basket.subtotal;
     const snapshot={company_name:'TT LEBILA',company_nif:fiscal.settings.company_nif,company_address:fiscal.settings.company_address,regime:fiscal.settings.regime,price_mode:fiscal.settings.price_mode,legal_basis:fiscal.settings.legal_basis,confirmed_by:fiscal.settings.confirmed_by,confirmed_at:fiscal.settings.confirmed_at,revision:fiscal.revision,groups:basket.groups};
     const id=Number(run('INSERT INTO sales(user_id,shift_id,customer,subtotal,discount,total,paid,change_due,method,tax_base,tax_total,fiscal_state,fiscal_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',user.id,shift.id,descriptiveText(body.customer || 'Consumidor final').slice(0,150),subtotal,discount,total,paid,paid-total,body.method,basket.tax_base,basket.tax_total,basket.fiscal_state,JSON.stringify(snapshot)).lastInsertRowid);
-    for(const i of basket.lines){const itemId=Number(run('INSERT INTO items(sale_id,product_id,name,unit,quantity,price,total,discount_amount,tax_base,tax_amount,taxed_total,tax_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',id,i.id,i.name,i.unit,i.quantity,i.price,i.total,i.discount_amount,i.tax_base,i.tax_amount,i.taxed_total,i.tax_snapshot?JSON.stringify(i.tax_snapshot):null).lastInsertRowid);ops.allocate(itemId,i.id,i.quantity);run('UPDATE products SET stock=ROUND(stock-?,3) WHERE id=?',i.quantity,i.id);}
+    for(const i of basket.lines){const itemId=Number(run('INSERT INTO items(sale_id,product_id,name,unit,quantity,price,total,discount_amount,tax_base,tax_amount,taxed_total,tax_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',id,i.id,i.name,i.unit,i.quantity,i.price,i.total,i.discount_amount,i.tax_base,i.tax_amount,i.taxed_total,i.tax_snapshot?JSON.stringify(i.tax_snapshot):null).lastInsertRowid);ops.allocate(itemId,i.id,i.quantity,user,id);run('UPDATE products SET stock=ROUND(stock-?,3) WHERE id=?',i.quantity,i.id);}
     audit(user,'Venda',`Recibo #${id}; total ${total/100} Kz`);return receipt(id);
   });
   if (/^\/api\/sales\/\d+$/.test(path) && req.method==='GET') { const r=receipt(Number(path.split('/').pop())); if(!r.id) fail('Recibo inexistente.',404); if(((user.role==='vendedor'&&!user.permissions.sales_cancel)||(!user.permissions.history&&!user.permissions.dashboard&&!user.permissions.sales_cancel)) && (r.user_id!==user.id||!one('SELECT id FROM shifts WHERE id=? AND user_id=?',r.shift_id,user.id))) fail('Sem permissão.',403); return r; }
@@ -344,7 +351,11 @@ async function api(req, res, path, body) {
       configured={...configured,...body.permissions};
     }
     const effective=permissions(role,configured,job);
-    if(!effective.cash&&one('SELECT id FROM shifts WHERE user_id=? AND closed IS NULL',target.id))fail('Feche primeiro o caixa deste utilizador antes de retirar o acesso ao caixa.');
+    if(user.role==='gerente')for(const [key,value] of Object.entries(effective)){
+      const previous=permissions(target.role,JSON.parse(target.permissions||'{}'),target.job_type);
+      if(value&&!user.permissions[key]&&!previous[key])fail('Não pode conceder um acesso que não possui.',403);
+    }
+    if((!effective.cash||!body.active)&&one('SELECT id FROM shifts WHERE user_id=? AND closed IS NULL',target.id))fail('Feche primeiro o caixa deste utilizador antes de retirar o acesso ao caixa.');
     run('UPDATE users SET role=?,active=?,permissions=?,job_type=? WHERE id=?',role,Number(body.active),JSON.stringify(effective),job,target.id);run('DELETE FROM sessions WHERE user_id=?',target.id);audit(user,'Permissões',`${target.name}: ${role}, ${body.active ? 'ativo' : 'inativo'}; acessos ${JSON.stringify(effective)}`);return {ok:true};
   });
   if(path==='/api/users/remove' && req.method==='POST') return transaction(()=>{

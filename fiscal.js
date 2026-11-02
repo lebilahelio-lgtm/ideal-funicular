@@ -39,7 +39,7 @@ export function saveTaxRule(db,body,user){
 export function taxReport(db,body){
  const start=fiscalDate(body.start,'Data inicial'),end=fiscalDate(body.end,'Data final');if(end<start)throw error('A data final não pode ser anterior à data inicial.');
  const sales=db.prepare("SELECT * FROM sales WHERE NOT EXISTS(SELECT 1 FROM sale_cancellations c WHERE c.sale_id=sales.id) AND date(created,'+1 hour') BETWEEN ? AND ? ORDER BY id").all(start,end),ids=new Set(sales.map(s=>s.id));
- const items=db.prepare("SELECT i.* FROM items i JOIN sales s ON s.id=i.sale_id WHERE date(s.created,'+1 hour') BETWEEN ? AND ? AND s.fiscal_state='applied'").all(start,end);
+ const items=db.prepare("SELECT i.* FROM items i JOIN sales s ON s.id=i.sale_id WHERE NOT EXISTS(SELECT 1 FROM sale_cancellations c WHERE c.sale_id=s.id) AND date(s.created,'+1 hour') BETWEEN ? AND ? AND s.fiscal_state='applied'").all(start,end);
  const groups=new Map();for(const item of items){const rule=JSON.parse(item.tax_snapshot);const key=JSON.stringify([rule.id,rule.rate_bps,rule.kind,rule.legal_basis]);const group=groups.get(key)||{...rule,tax_base:0,tax_amount:0,total:0};group.tax_base+=item.tax_base;group.tax_amount+=item.tax_amount;group.total+=item.taxed_total;groups.set(key,group);}
  return {start,end,sales_count:ids.size,applied_count:sales.filter(s=>s.fiscal_state==='applied').length,pending_count:sales.filter(s=>s.fiscal_state!=='applied').length,total:sales.reduce((sum,s)=>sum+s.total,0),tax_total:sales.filter(s=>s.fiscal_state==='applied').reduce((sum,s)=>sum+s.tax_total,0),tax_base:sales.filter(s=>s.fiscal_state==='applied').reduce((sum,s)=>sum+s.tax_base,0),groups:[...groups.values()]};
 }

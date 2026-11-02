@@ -68,7 +68,7 @@ try:
         page.get_by_role('button',name='Guardar e entrar na loja').click()
         initial_password='PrimeiroAcesso123!'
         page.get_by_role('heading',name='Visão geral',exact=True).wait_for()
-        page.get_by_role('button',name='Produtos e stock',exact=True).click()
+        page.get_by_role('button',name='Armazém',exact=True).click()
         page.get_by_role('button',name='Adicionar produto').click()
         assert_required_markers(page)
         assert not page.locator('#tax_rule_id').evaluate('(el)=>el.required')
@@ -90,6 +90,14 @@ try:
         page.locator('#pack_cost').fill('20000')
         page.locator('#price').fill('1000')
         assert page.locator('#price').input_value()=='1 000'
+        assert page.locator('#sale_enabled').input_value()=='false'
+        page.locator('#sale_enabled').select_option('true')
+        # Saving keeps the modal open until the state request finishes, so a following
+        # operation cannot edit a form that an older refresh is about to replace.
+        def check_refresh_order(route):
+            assert page.locator('#modal').evaluate('(el)=>el.open'), 'modal closed before refresh completed'
+            route.continue_()
+        page.route('**/api/state',check_refresh_order,times=1)
         page.get_by_role('button',name='Guardar produto').click()
         page.get_by_role('button',name='Entrada',exact=True).click()
         assert_required_markers(page)
@@ -110,6 +118,7 @@ try:
         page.locator('#pack_size').fill('12')
         page.locator('#pack_cost').fill('3000')
         page.locator('#price').fill('500')
+        page.locator('#sale_enabled').select_option('true')
         page.get_by_role('button',name='Guardar produto').click()
         page.locator('tr',has=page.get_by_text('Sabonete',exact=True)).get_by_role('button',name='Entrada',exact=True).click()
         page.locator('#supplier_id').select_option('1')
@@ -273,7 +282,7 @@ try:
         seller_page.locator('#confirmation').fill('PrimeiroVendedor123!')
         seller_page.get_by_role('button',name='Guardar e entrar na loja').click()
         seller_page.get_by_role('heading',name='Ponto de venda',exact=True).wait_for()
-        for label in ['Produtos e stock','Equipa e permissões','Atividades','Visão geral']:
+        for label in ['Armazém','Equipa e permissões','Atividades','Visão geral']:
             assert seller_page.get_by_role('button',name=label,exact=True).count()==0
         assert seller_page.locator('[data-stock],[data-product]').count()==0
         assert seller_page.locator('[data-add]').count()==2
@@ -326,9 +335,18 @@ try:
         page.locator('#confirmation').fill('NovaSenhaTemporaria123!')
         page.get_by_role('button',name='Alterar palavra-passe',exact=True).click()
         page.get_by_text('Palavra-passe alterada. Outras sessões foram terminadas.',exact=True).wait_for()
-        page.get_by_role('button',name='Produtos e stock',exact=True).click()
-        page.get_by_role('heading',name='Compras e movimentos de stock').wait_for()
-        assert 'Compra Inicial' in page.locator('body').inner_text()
+        page.get_by_role('button',name='Armazém',exact=True).click()
+        page.get_by_role('button',name='Histórico de entradas e saídas',exact=True).click()
+        page.get_by_role('heading',name='Histórico de entradas e saídas',exact=True).wait_for()
+        page.locator('#warehouse-movements tbody tr').first.wait_for()
+        assert 'Compra Inicial' in page.locator('#warehouse-movements').inner_text()
+        page.locator('#movement_kind').select_option('venda')
+        page.locator('#movement_direction').select_option('saida')
+        with page.expect_response(lambda r: '/api/warehouse/history' in r.url):
+            page.get_by_role('button',name='Filtrar movimentos',exact=True).click()
+        page.locator('#warehouse-movements tbody tr').first.wait_for()
+        assert 'Saída por venda' in page.locator('#warehouse-movements').inner_text()
+        page.get_by_role('button',name='Limpar filtros',exact=True).click()
         page.get_by_role('button',name='Terminar sessão',exact=True).click()
         page.locator('#identifier').fill('009763932CA042')
         page.locator('#password').fill('NovaSenhaTemporaria123!')
@@ -453,10 +471,27 @@ try:
         page.locator('#partners-results tbody tr').nth(1).wait_for()
         page.locator('#partner_kind').select_option('fornecedor')
         assert page.locator('#partners-results tbody tr').count()==1
-        page.get_by_role('button',name='Armazém e validades',exact=True).click()
+        page.get_by_role('button',name='Armazém',exact=True).click()
         page.locator('#warehouse-results tbody tr').first.wait_for()
         assert page.locator('[data-lot-edit]').count()==2
+        page.locator('#toast').evaluate("el=>el.className=''")
         page.screenshot(path='/tmp/loja-ui-test/armazem.png',full_page=True)
+        page.set_viewport_size({'width':390,'height':844})
+        assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'warehouse mobile horizontal overflow'
+        page.screenshot(path='/tmp/loja-ui-test/armazem-mobile.png',full_page=True)
+        page.set_viewport_size({'width':1440,'height':1050})
+        assert page.locator('.nav [data-page=products]').count()==0
+        product_id=page.locator('[data-catalog-product]').first.get_attribute('data-catalog-product')
+        page.locator('[data-sale-availability="'+product_id+'"]').click()
+        page.locator('[data-sale-availability="'+product_id+'"][data-enabled=true]').wait_for()
+        page.get_by_role('button',name='Ponto de venda',exact=True).click()
+        assert page.locator('[data-add="'+product_id+'"]').count()==0
+        page.get_by_role('button',name='Armazém',exact=True).click()
+        page.locator('[data-sale-availability="'+product_id+'"]').click()
+        page.locator('[data-sale-availability="'+product_id+'"][data-enabled=false]').wait_for()
+        page.get_by_role('button',name='Ponto de venda',exact=True).click()
+        assert page.locator('[data-add="'+product_id+'"]').count()==1
+        page.get_by_role('button',name='Armazém',exact=True).click()
         # Lower warehouse worker gets entry/expiry tools, never the fixed catalogue or partner contacts.
         worker=page.request.post('http://127.0.0.1:3001/api/users',data={'name':'Pessoa Armazém','bi':'009763935CA042','birth_date':'1990-01-01','email':'warehouse@gmail.com','role':'armazem'}).json()
         wc=browser.new_context(viewport={'width':1440,'height':1050});wp=wc.new_page()
@@ -469,12 +504,13 @@ try:
         wp.get_by_role('heading',name='Produtos e stock',exact=True).wait_for()
         assert wp.get_by_role('button',name='Adicionar produto',exact=True).count()==0
         assert wp.get_by_role('button',name='Parceiros',exact=True).count()==0
-        wp.get_by_role('button',name='Armazém e validades',exact=True).click()
+        wp.get_by_role('button',name='Armazém',exact=True).click()
         wp.locator('[data-lot-edit]').first.wait_for()
         assert wp.get_by_role('button',name='Registar saída',exact=True).count()==2
         wp.locator('[data-dispose-lot]').first.click()
         wp.locator('#quantity').fill('0.1');wp.locator('#reason').fill('Embalagem danificada')
         wp.get_by_role('button',name='Confirmar saída',exact=True).click()
+        wp.get_by_role('button',name='Histórico de entradas e saídas',exact=True).click()
         wp.get_by_text('Embalagem Danificada',exact=True).wait_for()
         wc.close()
         page.get_by_role('button',name='Histórico de vendas',exact=True).click()
@@ -493,7 +529,7 @@ try:
         assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'mobile horizontal overflow'
         assert not errors, errors
         browser.close()
-        print('PASS: outside-click and Escape preserve modal forms, blue modal headers and red close button, physical registers, private PIN panel, supplier creation, partner filters, lower warehouse access and disposal, immutable cancellation UI, own-cash seller history, leadership history filters and mobile layout, custom manager permissions, seller menus in separate session, seller/manager registration, unique leadership UI, incomplete-response handling, live validation, grouped numbers, password visibility/strength, filters, simulated recovery UI, real password reset, multi-product receipt, underpayment down to one cent, electronic excess, cash shortage, pending VAT, rule configuration, product classification, mixed VAT receipt, tax report, required markers and conditional requirements, centered blue registration/login and desktop/mobile layout; no JavaScript errors.')
+        print('PASS: unified warehouse catalogue, sale availability controls, warehouse movement filters, warehouse desktop/mobile layout, outside-click and Escape preserve modal forms, blue modal headers and red close button, physical registers, private PIN panel, supplier creation, partner filters, lower warehouse access and disposal, immutable cancellation UI, own-cash seller history, leadership history filters and mobile layout, custom manager permissions, seller menus in separate session, seller/manager registration, unique leadership UI, incomplete-response handling, live validation, grouped numbers, password visibility/strength, filters, simulated recovery UI, real password reset, multi-product receipt, underpayment down to one cent, electronic excess, cash shortage, pending VAT, rule configuration, product classification, mixed VAT receipt, tax report, required markers and conditional requirements, centered blue registration/login and desktop/mobile layout; no JavaScript errors.')
 except Exception:
     try:
         print('Browser flow failed; no credentials logged.')
