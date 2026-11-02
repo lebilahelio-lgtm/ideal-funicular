@@ -69,6 +69,12 @@ Os históricos de vendas e de movimentos do armazém são paginados, com 50 regi
 
 ## Alarmes visuais e seleção no ponto de venda
 
-O total físico é azul. A quantidade disponível é verde e passa a vermelho apenas quando é menor que o mínimo configurado. O triângulo com ! do produto mostra o pior estado entre lotes disponibilizados com quantidade: verde (em dia), laranja (dentro do prazo de aviso) ou vermelho (expirado). Um lote expirado continua a sinalizar a necessidade de tratamento mesmo quando outro lote válido pode ser vendido. Lotes pendentes e esgotados não alteram o alarme global. Os detalhes de cada lote mostram o respetivo estado, com cor e texto; lotes expirados continuam bloqueados para venda.
+O total físico é azul. A quantidade disponível é verde e passa a vermelho apenas quando é menor que o mínimo configurado, sem criar outro aviso ou símbolo de escassez. O único triângulo com !, junto à quantidade disponível, mostra o pior estado entre lotes disponibilizados com quantidade: verde (em dia), laranja (dentro do prazo de aviso) ou vermelho (expirado). Um lote expirado continua a sinalizar a necessidade de tratamento mesmo quando outro lote válido pode ser vendido. Lotes pendentes e esgotados não alteram o alarme global. Os detalhes de cada lote mostram o respetivo estado, com cor e texto; lotes expirados continuam bloqueados para venda.
 
 Com dois ou mais lotes vendáveis, clicar no produto no caixa abre uma escolha com o mais antigo selecionado e sugerido por FIFO. Apenas lotes disponibilizados, dentro da validade e com quantidade aparecem. Escolher um lote diferente é permitido e é respeitado pelo servidor. As linhas do carrinho identificam produto e lote; não há substituição automática de uma escolha explícita se o lote se tornar indisponível. Os pedidos sem lote continuam a usar o FIFO automático. A venda e as saídas por lote mantêm-se na mesma transação.
+
+## Apresentação das janelas
+
+**Ver detalhes** tem botão verde e mostra só lotes com quantidade positiva. Os lotes esgotados permanecem nos registos e no histórico, mas não ocupam a lista operacional. A escolha de lote no ponto de venda é uma janela pequena, com o mais antigo sugerido e apenas as informações necessárias para selecionar.
+
+Em todas as janelas, o cabeçalho e o X ficam fora da área de rolagem. Só o conteúdo abaixo do cabeçalho rola, incluindo formulários longos e listas com muitos lotes.

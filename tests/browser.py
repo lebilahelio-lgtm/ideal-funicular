@@ -85,6 +85,16 @@ try:
         assert page.locator('#category').input_value()=='Alimentos-Secos'
         page.locator('#unit').select_option('kg')
         page.locator('#product-extra summary').click()
+        page.set_viewport_size({'width':390,'height':640})
+        result=page.locator('#modal').evaluate("""dialog=>{
+            const body=dialog.querySelector('.modal-body'),head=dialog.querySelector('.modal-head');
+            const before=head.getBoundingClientRect().top;
+            body.scrollTop=body.scrollHeight;
+            return {scrollable:body.scrollHeight>body.clientHeight,scrolled:body.scrollTop>0,headFixed:Math.abs(head.getBoundingClientRect().top-before)<1,dialogScroll:dialog.scrollTop,bodyBelowHeader:body.getBoundingClientRect().top>=head.getBoundingClientRect().bottom-1};
+        }""")
+        assert result['scrollable'] and result['scrolled'] and result['headFixed'] and result['dialogScroll']==0 and result['bodyBelowHeader'], result
+        page.locator('#modal .modal-body').evaluate('el=>el.scrollTop=0')
+        page.set_viewport_size({'width':1440,'height':1050})
         page.locator('#barcode').fill('12345')
         page.locator('#pack_type').fill('Saco')
         page.locator('#pack_size').fill('25')
@@ -584,9 +594,16 @@ try:
         page.locator('#modal').wait_for(state='hidden')
         stock_row=page.locator('[data-catalog-product="1"]')
         expect(stock_row.locator('.quantity-available')).to_have_class(re.compile('is-low'))
+        assert stock_row.locator('[data-expiry-state]').count()==1
+        assert stock_row.locator('.minimum-alert').count()==0
+        assert stock_row.locator('.warehouse-product-name [data-expiry-state]').count()==0
+        amount_box=stock_row.locator('.quantity-available strong').bounding_box()
+        icon_box=stock_row.locator('.expiry-indicator').bounding_box()
+        assert icon_box['x']>=amount_box['x']+amount_box['width'] and abs(icon_box['y']+icon_box['height']/2-amount_box['y']-amount_box['height']/2)<4
+        assert stock_row.locator('[data-product-details]').evaluate("el=>getComputedStyle(el).backgroundColor")=='rgb(22, 116, 73)'
         assert stock_row.locator('.quantity-total strong').evaluate("el=>getComputedStyle(el).color")=='rgb(25, 93, 184)'
         assert stock_row.locator('.quantity-available strong').evaluate("el=>getComputedStyle(el).color")=='rgb(180, 35, 50)'
-        assert stock_row.locator('h2').evaluate("el=>parseFloat(getComputedStyle(el).fontSize)")>=22
+        assert stock_row.locator('h2').evaluate("el=>parseFloat(getComputedStyle(el).fontSize)")>=20
         page.locator('[data-product-details="1"]').click()
         page.locator('[data-lot="3"] summary').click()
         page.get_by_role('button',name='Disponibilizar lote',exact=True).click()
@@ -599,9 +616,13 @@ try:
         page.get_by_role('button',name='Ponto de venda',exact=True).click()
         page.locator('[data-add="1"]').click()
         page.locator('#lot-choice-form').wait_for()
+        picker_box=page.locator('#modal').bounding_box()
+        assert picker_box['width']<=370 and picker_box['height']<=360, picker_box
+        assert page.locator('#modal').evaluate("el=>el.classList.contains('modal-compact')")
+        assert page.locator('#lot-choice-form .expiry-badge').count()==0
         expect(page.locator('#lot-choice-form input[value="1"]')).to_be_checked()
         assert page.locator('#lot-choice-form input[value="1"]').evaluate('el=>el===document.activeElement')
-        assert 'Mais antigo disponível' in page.locator('#lot-choice-form').inner_text()
+        assert 'Mais antigo · Sugerido' in page.locator('#lot-choice-form').inner_text()
         assert_required_markers(page)
         page.screenshot(path='/tmp/loja-ui-test/escolher-lote.png',full_page=True)
         page.set_viewport_size({'width':390,'height':844})
@@ -636,21 +657,21 @@ try:
             page.locator('#modal').wait_for(state='hidden')
         correct_expiry((day+datetime.timedelta(days=1)).isoformat())
         expect(page.locator('[data-catalog-product="1"] [data-expiry-state]')).to_have_attribute('data-expiry-state','warning')
-        assert page.locator('[data-catalog-product="1"] .expiry-badge svg').evaluate("el=>getComputedStyle(el).color")=='rgb(166, 83, 6)'
+        assert page.locator('[data-catalog-product="1"] .expiry-indicator svg').evaluate("el=>getComputedStyle(el).color")=='rgb(166, 83, 6)'
         page.locator('[data-product-details="1"]').click()
         expect(page.locator('[data-lot="1"]')).to_have_class(re.compile('lot-warning'))
         expect(page.locator('[data-lot="3"]')).to_have_class(re.compile('lot-healthy'))
         page.locator('#modal .modal-close').click()
         correct_expiry((day-datetime.timedelta(days=1)).isoformat())
         expect(page.locator('[data-catalog-product="1"] [data-expiry-state]')).to_have_attribute('data-expiry-state','expired')
-        assert page.locator('[data-catalog-product="1"] .expiry-badge svg').evaluate("el=>getComputedStyle(el).color")=='rgb(180, 35, 50)'
+        assert page.locator('[data-catalog-product="1"] .expiry-indicator svg').evaluate("el=>getComputedStyle(el).color")=='rgb(180, 35, 50)'
         page.locator('[data-product-details="1"]').click()
         expect(page.locator('[data-lot="1"]')).to_have_class(re.compile('lot-expired'))
         page.screenshot(path='/tmp/loja-ui-test/alarme-lote-expirado.png',full_page=True)
         page.locator('#modal .modal-close').click()
         correct_expiry('2099-12-31')
         expect(page.locator('[data-catalog-product="1"] [data-expiry-state]')).to_have_attribute('data-expiry-state','healthy')
-        assert page.locator('[data-catalog-product="1"] .expiry-badge svg').evaluate("el=>getComputedStyle(el).color")=='rgb(22, 116, 73)'
+        assert page.locator('[data-catalog-product="1"] .expiry-indicator svg').evaluate("el=>getComputedStyle(el).color")=='rgb(22, 116, 73)'
         page.locator('#toast').evaluate("el=>el.className=''")
         page.screenshot(path='/tmp/loja-ui-test/armazem-alarmes.png',full_page=True)
         page.locator('[data-product-details="1"]').click()
@@ -663,6 +684,28 @@ try:
         page.locator('#modal').wait_for(state='hidden')
         page.get_by_role('button',name='Histórico de vendas',exact=True).click()
         page.locator('#history-results').get_by_text('Cancelada',exact=True).wait_for()
+        current_lots=page.request.get('http://127.0.0.1:3001/api/warehouse/products/1').json()['lots']
+        exhausted=next(l for l in current_lots if l['id']==3)
+        outgoing=page.request.post('http://127.0.0.1:3001/api/warehouse/dispose',data={'lot_id':3,'quantity':exhausted['quantity'],'kind':'outra_saida','reason':'Saída para validar lote esgotado'})
+        assert outgoing.status==200
+        assert next(l for l in page.request.get('http://127.0.0.1:3001/api/warehouse/products/1').json()['lots'] if l['id']==3)['remaining']==0
+        # Enough separate purchases to verify scrolling on a long details window too.
+        for _ in range(9):
+            purchase=page.request.post('http://127.0.0.1:3001/api/stock',data={'product_id':1,'supplier_id':1,'purchased_on':day.isoformat(),'expires_on':'2099-12-31','packs':1})
+            assert purchase.status==200
+        page.get_by_role('button',name='Armazém',exact=True).click()
+        page.locator('[data-product-details="1"]').click()
+        page.locator('#modal .warehouse-lots').wait_for()
+        assert page.locator('#modal [data-lot="3"]').count()==0
+        assert 'Esgotado' not in page.locator('#modal').inner_text()
+        assert not page.locator('#modal').evaluate("el=>el.classList.contains('modal-compact')")
+        header_position=page.locator('#modal .modal-head').bounding_box()['y']
+        page.locator('#modal .modal-body').evaluate('el=>el.scrollTop=el.scrollHeight')
+        assert page.locator('#modal .modal-body').evaluate('el=>el.scrollTop')>0
+        assert abs(page.locator('#modal .modal-head').bounding_box()['y']-header_position)<1
+        assert page.locator('#modal').evaluate('el=>el.scrollTop')==0
+        page.screenshot(path='/tmp/loja-ui-test/detalhes-cabecalho-fixo.png',full_page=True)
+        page.locator('#modal .modal-close').click()
         page.get_by_role('button',name='Visão geral',exact=True).click()
         page.locator('#toast').evaluate("el=>el.className=''")
         page.screenshot(path='/tmp/loja-ui-test/tt-dashboard.png',full_page=True)
@@ -672,7 +715,7 @@ try:
         assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'mobile horizontal overflow'
         assert not errors, errors
         browser.close()
-        print('PASS: warehouse history route/breadcrumb/reload/back with saved filters, green/orange/red expiry alarms, blue total and green/red available stock, real two-lot selection with FIFO suggestion, larger type, simplified global warehouse, required purchase/expiry dates, new lots pending even on released products, on-demand product details, per-lot availability controls, warehouse movement filters, warehouse desktop/mobile layout, outside-click and Escape preserve modal forms, blue modal headers and red close button, physical registers, private PIN panel, supplier creation, partner filters, lower warehouse access and disposal, immutable cancellation UI, own-cash seller history, leadership history filters and mobile layout, custom manager permissions, seller menus in separate session, seller/manager registration, unique leadership UI, incomplete-response handling, live validation, grouped numbers, password visibility/strength, filters, simulated recovery UI, real password reset, multi-product receipt, underpayment down to one cent, electronic excess, cash shortage, pending VAT, rule configuration, product classification, mixed VAT receipt, tax report, required markers and conditional requirements, centered blue registration/login and desktop/mobile layout; no JavaScript errors.')
+        print('PASS: compact lot picker, depleted lots hidden with history preserved, single expiry icon beside available stock, green details button, fixed headers with body-only scrolling on forms and details, warehouse history route/breadcrumb/reload/back with saved filters, green/orange/red expiry alarms, blue total and green/red available stock, real two-lot selection with FIFO suggestion, larger type, simplified global warehouse, required purchase/expiry dates, new lots pending even on released products, on-demand product details, per-lot availability controls, warehouse movement filters, warehouse desktop/mobile layout, outside-click and Escape preserve modal forms, blue modal headers and red close button, physical registers, private PIN panel, supplier creation, partner filters, lower warehouse access and disposal, immutable cancellation UI, own-cash seller history, leadership history filters and mobile layout, custom manager permissions, seller menus in separate session, seller/manager registration, unique leadership UI, incomplete-response handling, live validation, grouped numbers, password visibility/strength, filters, simulated recovery UI, real password reset, multi-product receipt, underpayment down to one cent, electronic excess, cash shortage, pending VAT, rule configuration, product classification, mixed VAT receipt, tax report, required markers and conditional requirements, centered blue registration/login and desktop/mobile layout; no JavaScript errors.')
 except Exception:
     try:
         print('Browser flow failed; no credentials logged.')
