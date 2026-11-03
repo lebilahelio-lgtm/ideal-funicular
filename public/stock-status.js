@@ -1,5 +1,12 @@
 // Angola calendar dates: expiration remains valid through the end of its day.
 export const stockDay=()=>new Date(Date.now()+3600000).toISOString().slice(0,10);
+export function unavailableStockStatus(unavailable,available){
+ unavailable=Math.round(unavailable*1000);
+ available=Math.round(available*1000);
+ if(unavailable<=0)return 'low';
+ if(available<=0)return 'healthy';
+ return unavailable*100<available*5?'low':unavailable*100<=available*30?'warning':'healthy';
+}
 export function expiryStatus(expiresOn,warningDays,day=stockDay()){
  if(!expiresOn)return 'healthy';
  if(expiresOn<day)return 'expired';

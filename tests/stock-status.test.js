@@ -1,6 +1,12 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {expiryStatus,productExpiryStatus} from '../public/stock-status.js';
+import {expiryStatus,productExpiryStatus,unavailableStockStatus} from '../public/stock-status.js';
+
+test('unavailable stock colors use available stock as the baseline, including threshold boundaries',()=>{
+ for(const [unavailable,available,status] of [[0,100,'low'],[4.999,100,'low'],[5,100,'warning'],[30,100,'warning'],[30.001,100,'healthy'],[0.005,0.1,'warning'],[0,0,'low'],[10,0,'healthy']]){
+  assert.equal(unavailableStockStatus(unavailable,available),status,`${unavailable}/${available}`);
+ }
+});
 
 test('expiry colors respect the Angola day, warning window and end-of-day validity',()=>{
  assert.equal(expiryStatus('2026-11-10',7,'2026-11-02'),'healthy');
