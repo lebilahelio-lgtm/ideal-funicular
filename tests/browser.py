@@ -415,12 +415,61 @@ try:
         page.set_viewport_size({'width':390,'height':844})
         assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'warehouse history mobile overflow'
         page.set_viewport_size({'width':1440,'height':1050})
-        page.locator('#movement_kind').select_option('venda')
-        page.locator('#movement_direction').select_option('saida')
-        with page.expect_response(lambda r: '/api/warehouse/history' in r.url):
-            page.get_by_role('button',name='Filtrar movimentos',exact=True).click()
-        page.locator('#warehouse-movements tbody tr').first.wait_for()
-        assert 'Saída por venda' in page.locator('#warehouse-movements').inner_text()
+        assert page.get_by_role('button',name='Filtrar movimentos',exact=True).count()==0
+        assert page.locator('label[for="movement_q"]').count()==0
+        assert page.locator('#movement_q').get_attribute('placeholder')=='Pesquisar…'
+        def movement_filter(action):
+            with page.expect_response(lambda r: '/api/warehouse/history' in r.url) as response:
+                action()
+            data=response.value.json()
+            assert response.value.status==200, data
+            expect(page.locator('#warehouse-movements')).to_have_attribute('aria-busy','false')
+            expect(page.locator('#warehouse-movements>.help')).to_contain_text(str(data['count'])+' movimentos')
+            assert page.locator('#warehouse-movements tbody tr').count()==len(data['movements'])
+            return data
+        clear_movements=lambda:movement_filter(lambda:page.get_by_role('button',name='Limpar filtros',exact=True).click())
+        all_movements=clear_movements()
+        assert all_movements['count']>0
+        searched=movement_filter(lambda:page.locator('#movement_q').fill('Compra Inicial'))
+        assert searched['count']>0 and all('Compra Inicial' in m['reason'] for m in searched['movements'])
+        assert movement_filter(lambda:page.locator('#movement_q').fill('sem_resultados_xyz'))['count']==0
+        expect(page.locator('#warehouse-movements')).to_contain_text('Nenhum movimento corresponde')
+        clear_movements()
+        product=movement_filter(lambda:page.locator('#movement_product').select_option('1'))
+        assert product['count']>0 and all(m['product_id']==1 for m in product['movements'])
+        clear_movements()
+        sales=movement_filter(lambda:page.locator('#movement_kind').select_option('venda'))
+        assert sales['count']>0 and all(m['kind']=='venda' for m in sales['movements'])
+        outgoing=movement_filter(lambda:page.locator('#movement_direction').select_option('saida'))
+        assert outgoing['count']>0 and all(m['quantity']<0 for m in outgoing['movements'])
+        assert movement_filter(lambda:page.locator('#movement_direction').select_option('entrada'))['count']==0
+        clear_movements()
+        incoming=movement_filter(lambda:page.locator('#movement_direction').select_option('entrada'))
+        assert incoming['count']>0 and all(m['quantity']>0 for m in incoming['movements'])
+        clear_movements()
+        assert movement_filter(lambda:page.locator('#movement_start').fill('2099-01-01'))['count']==0
+        clear_movements()
+        assert movement_filter(lambda:page.locator('#movement_end').fill('1900-01-01'))['count']==0
+        clear_movements()
+        today=(datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=1)).date().isoformat()
+        dated=movement_filter(lambda:page.locator('#movement_start').fill(today))
+        dated=movement_filter(lambda:page.locator('#movement_end').fill(today))
+        assert dated['count']>0
+        assert all((datetime.datetime.fromisoformat(m['created']).replace(tzinfo=datetime.timezone.utc)+datetime.timedelta(hours=1)).date().isoformat()==today for m in dated['movements'])
+        clear_movements()
+        # Exercise both pagination buttons; API pagination itself is covered by warehouse.test.js.
+        def paginated_history(route):
+            number=route.request.post_data_json['page']
+            route.fulfill(content_type='application/json',body=json.dumps({**all_movements,'count':51,'pages':2,'page':number}))
+        page.route('**/api/warehouse/history',paginated_history)
+        clear_movements()
+        assert movement_filter(lambda:page.locator('[data-warehouse-page="2"]').click())['page']==2
+        assert movement_filter(lambda:page.locator('[data-warehouse-page="1"]').click())['page']==1
+        page.unroute('**/api/warehouse/history',paginated_history)
+        clear_movements()
+        movement_filter(lambda:page.locator('#movement_kind').select_option('venda'))
+        movement_filter(lambda:page.locator('#movement_direction').select_option('saida'))
+        page.screenshot(path='/tmp/loja-ui-test/armazem-historico-filtros.png',full_page=True)
         page.get_by_role('navigation',name='Caminho').get_by_role('button',name='Armazém',exact=True).click()
         page.locator('.warehouse-catalog').wait_for()
         assert page.url.endswith('#/armazem')
