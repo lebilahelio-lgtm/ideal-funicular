@@ -245,7 +245,7 @@ async function api(req, res, path, body) {
     if(nameError(body.name,true))fail(nameError(body.name,true));
     const name=titleName(text(body.name,'Produto')), category=descriptiveText(text(body.category,'Categoria')), unit=text(body.unit,'Unidade'), pack=descriptiveText(text(body.pack_type,'Embalagem'));
     if (!['un','kg','L','g','mL'].includes(unit)) fail('Unidade não suportada.');
-    const size=number(body.pack_size,'Conteúdo da embalagem',0.001), cost=money(body.pack_cost,'Custo'), price=money(body.price,'Preço'), minimum=number(body.minimum,'Stock mínimo'), barcode=body.barcode ? text(body.barcode,'Código de barras',80) : null;
+    const size=number(body.pack_size,'Conteúdo da embalagem',0.001), cost=money(body.pack_cost===undefined||body.pack_cost===''?0:body.pack_cost,'Custo'), price=money(body.price,'Preço'), minimum=number(body.minimum,'Stock mínimo'), barcode=body.barcode ? text(body.barcode,'Código de barras',80) : null;
     return transaction(()=>{
       let taxRule=body.tax_rule_id===undefined?(body.id?one('SELECT tax_rule_id FROM products WHERE id=?',body.id)?.tax_rule_id:null):body.tax_rule_id;
       if(taxRule!==null&&taxRule!==''&&taxRule!==undefined){taxRule=Number(taxRule);if(!Number.isSafeInteger(taxRule)||!one('SELECT id FROM tax_rules WHERE id=? AND active=1',taxRule))fail('Regra fiscal inválida ou inativa.');}else taxRule=null;

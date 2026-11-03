@@ -83,8 +83,16 @@ try:
         assert page.locator('#pack_type').input_value()==''
         assert page.locator('#pack_type').evaluate('(el)=>el.required')
         assert not page.locator('#pack_size').evaluate('(el)=>el.checkValidity()')
-        assert page.locator('#packaging-types option').evaluate_all('(els)=>els.map(el=>el.value)')==['Caixa','Fita','Pacote','Saco','Sesto']
-        assert page.locator('#product-form [data-number]').evaluate_all('(els)=>els.every(el=>el.value==="0")')
+        assert page.locator('#packaging-types [role=option]').evaluate_all('(els)=>els.map(el=>el.dataset.packaging)')==['Caixa','Fita','Pacote','Saco','Sesto']
+        assert page.locator('#product-form [data-number]:not(#pack_cost)').evaluate_all('(els)=>els.every(el=>el.value==="0")')
+        assert page.locator('#pack_cost').input_value()==''
+        assert not page.locator('#pack_cost').evaluate('(el)=>el.required')
+        page.locator('#pack_type').focus()
+        page.keyboard.press('ArrowDown')
+        page.keyboard.press('Enter')
+        assert page.locator('#pack_type').input_value()=='Caixa'
+        assert page.locator('#packaging-types').is_hidden()
+        page.locator('#pack_type').fill('')
         page.locator('#name').fill('Arroz Branco')
         page.mouse.click(8,8)
         assert page.locator('#modal').evaluate('(el)=>el.open')
@@ -127,7 +135,10 @@ try:
         page.locator('[data-product-drawer="1"] [data-stock]').click()
         assert_required_markers(page)
         assert page.locator('#packs').input_value()=='0'
-        assert page.locator('#pack_cost').input_value()=='0'
+        assert page.locator('#pack_cost').input_value()=='20 000'
+        page.locator('#pack_cost').fill('18000')
+        supplier_gap=page.locator('#add-supplier').bounding_box()['y']-sum(page.locator('#supplier_id').bounding_box()[k] for k in ['y','height'])
+        assert 0<=supplier_gap<=8
         page.locator('#add-supplier').click()
         assert page.locator('#partner-form [required]').evaluate_all('(els)=>els.map(el=>el.name)')==['partner_name','partner_location']
         assert page.locator('#partner-form input').evaluate_all('(els)=>els.map(el=>el.name)')==['partner_name','partner_location','partner_phone','partner_email']
@@ -137,6 +148,7 @@ try:
         page.locator('#partner_location').fill('Luanda')
         page.get_by_role('button',name='Guardar parceiro',exact=True).click()
         page.locator('#supplier_id option[value="1"]').wait_for(state='attached')
+        assert page.locator('#pack_cost').input_value()=='18 000'
         page.locator('#purchased_on').fill('2020-01-01')
         page.locator('#expires_on').fill('2099-12-31')
         assert page.locator('#purchased_on').evaluate('(el)=>el.required')
