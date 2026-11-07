@@ -139,3 +139,6 @@ main[data-view="warehouse"] h1{font-size:34px}.warehouse-product{padding:22px 24
  @media(prefers-reduced-motion:no-preference){main>.page-head{animation:content-enter .22s ease-out}dialog[open]{animation:content-enter .18s ease-out}button:active:not(:disabled){transform:translateY(1px)}@keyframes content-enter{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}}
  @media(prefers-reduced-motion:reduce){#warehouse-movements{transition:none}}
 }
+
+/* Keep the access headline on one line at every screen size. */
+.auth .auth-hero h1,.auth:has(#birth_date) .auth-hero h1{white-space:nowrap;font-size:clamp(14px,4.5vw,39px)}
