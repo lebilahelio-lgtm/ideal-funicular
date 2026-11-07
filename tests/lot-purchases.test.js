@@ -22,6 +22,16 @@ test('dated purchases always create pending lots; release and FIFO are per lot; 
   const savedSupplier=(await api('partners')).body.partners.find(p=>p.id===minimalSupplier.body.id);assert.equal(savedSupplier.phone,'');assert.equal(savedSupplier.email,'');
   for(const fields of [{name:'Sem Local'},{location:'Luanda'},{name:'Teste',location:'Luanda',phone:'abc'},{name:'Teste',location:'Luanda',email:'invalido'}])assert.equal((await api('suppliers',fields)).status,400);
   const product={name:'Arroz',category:'Alimentares',unit:'kg',minimum:1,pack_type:'Saco',pack_size:1,pack_cost:50,price:100,expiry_warning_days:7};const created=await api('products',product);assert.equal(created.status,200);const id=created.body.id;
+  // Reject zero prices on creation and editing, including values that round to zero cents.
+  for(const price of [0,'0',-1,0.001]){
+   for(const fields of [{name:'Preço Inválido'},{id}]){
+    const rejected=await api('products',{...product,...fields,price});
+    assert.equal(rejected.status,400);
+   }
+  }
+  assert.equal((await api('state')).body.products.find(p=>p.id===id).price,10000);
+  const cheapest=await api('products',{...product,name:'Preço Mínimo',price:0.01});assert.equal(cheapest.status,200);
+  assert.equal((await api('state')).body.products.find(p=>p.id===cheapest.body.id).price,1);
   assert.equal((await api('products',{...product,name:'Produto Livre',pack_type:'Tambor',expiry_warning_days:0})).status,200);
   assert.equal((await api('products',{...product,pack_type:''})).status,400);assert.equal((await api('products',{...product,pack_size:0})).status,400);
   const zeroDefault=await api('products',{...product,name:'Sem Aviso Prévio',expiry_warning_days:undefined});assert.equal(zeroDefault.status,200);assert.equal((await api('state')).body.products.find(p=>p.id===zeroDefault.body.id).expiry_warning_days,0);

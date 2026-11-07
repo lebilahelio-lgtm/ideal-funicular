@@ -121,6 +121,10 @@ try:
         page.locator('#pack_size').fill('25')
         page.locator('#expiry_warning_days').fill('7')
         page.locator('#pack_cost').fill('20000')
+        page.locator('#price').fill('0')
+        assert not page.locator('#price').evaluate('el=>el.checkValidity()'), 'zero sale price must be invalid'
+        page.locator('#price').fill('0.01')
+        assert page.locator('#price').evaluate('el=>el.checkValidity()'), 'one cent sale price must be valid'
         page.locator('#price').fill('1000')
         assert page.locator('#price').input_value()=='1 000'
         assert page.locator('#sale_enabled').count()==0
